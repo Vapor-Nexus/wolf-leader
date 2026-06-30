@@ -544,3 +544,112 @@ body {
   .view, .chat-view { padding: 1rem; }
   .split-pane { grid-template-columns: 1fr; }
 }
+
+/* --- Arc5K button --- */
+/* Let the actions row wrap so the extra button never overflows the header. */
+.chat-actions { flex-wrap: wrap; }
+
+.btn-arc5k {
+  position: relative;
+  color: #0a0e17;
+  border: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: linear-gradient(120deg, #6c9eff 0%, #9b8cff 45%, #4ade80 100%);
+  background-size: 200% 200%;
+  box-shadow: 0 0 0 1px rgba(155, 140, 255, 0.4), 0 4px 14px rgba(108, 158, 255, 0.35);
+  animation: arc5k-shimmer 6s ease infinite;
+  overflow: hidden;
+}
+
+.btn-arc5k::before {
+  /* Sweeping sheen across the button. */
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  transform: skewX(-20deg);
+  animation: arc5k-sheen 3.8s ease-in-out infinite;
+}
+
+.btn-arc5k:hover {
+  box-shadow: 0 0 0 1px rgba(155, 140, 255, 0.7), 0 6px 22px rgba(108, 158, 255, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-arc5k:active { transform: translateY(0); }
+
+.btn-arc5k .arc5k-glyph {
+  display: inline-block;
+  font-weight: 700;
+  margin-right: 0.15rem;
+}
+
+.btn-arc5k.is-loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+.btn-arc5k.is-loading .arc5k-glyph {
+  animation: arc5k-spin 0.9s linear infinite;
+}
+
+@keyframes arc5k-shimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes arc5k-sheen {
+  0% { left: -60%; }
+  60%, 100% { left: 130%; }
+}
+
+@keyframes arc5k-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-arc5k,
+  .btn-arc5k::before,
+  .btn-arc5k.is-loading .arc5k-glyph {
+    animation: none;
+  }
+}
+
+/* --- Hover tooltip (used by the Arc5K button) --- */
+.has-tooltip { position: relative; }
+
+.has-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 320px;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 50;
+}
+
+.has-tooltip:hover::after,
+.has-tooltip:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}

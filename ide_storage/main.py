@@ -178,6 +178,16 @@ class MemoryCreate(BaseModel):
     semantic_descriptor: Optional[str] = None
 
 
+class Arc5KKickoff(BaseModel):
+    # Layers to review: subset of holistic/db/etl/backend/api/frontend.
+    layers: Optional[List[str]] = None
+
+
+class Arc5KReport(BaseModel):
+    report: str
+    layers: Optional[List[str]] = None
+
+
 class MemoryUpdate(BaseModel):
     type: Optional[str] = None
     content: Optional[str] = None
@@ -1214,6 +1224,39 @@ async def get_agent_brief(project_key: str):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return payload
+
+
+@app.post("/api/projects/{project_key}/arc5k")
+async def arc5k_kickoff(project_key: str, body: Optional[Arc5KKickoff] = None):
+    """Build the Arc5K architecture-review kickoff prompt for a project.
+
+    Read-only: returns instructions for an AI assistant to run the Arc5K skill.
+    Wolf Leader doesn't analyze code itself — the assistant does the review and
+    files the report back via the arc5k_review MCP tool or the report endpoint.
+    """
+    from . import arc5k
+
+    project = hub.resolve_project_key(project_key)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    layers = body.layers if body else None
+    return arc5k.build_arc5k_prompt(project, layers=layers)
+
+
+@app.post("/api/projects/{project_key}/arc5k/report")
+async def arc5k_store_report(project_key: str, body: Arc5KReport):
+    """File a finished Arc5K review into a project's memory."""
+    from . import arc5k
+
+    project = hub.resolve_project_key(project_key)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return arc5k.store_arc5k_report(
+            project["id"], body.report, layers=body.layers
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_id}/distill")

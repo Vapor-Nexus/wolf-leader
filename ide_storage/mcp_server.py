@@ -240,6 +240,43 @@ def save_session(
         return {"ok": False, "error": str(e)}
 
 
+@mcp.tool
+def arc5k_review(
+    report: Optional[str] = None,
+    layers: Optional[str] = None,
+    slug: Optional[str] = None,
+    project_id: Optional[int] = None,
+    ctx: Context = None,
+) -> dict:
+    """
+    Arc5K architecture review for a project (read-only, never prod).
+
+    Call with no report to GET the kickoff prompt: it tells you to run the `arc5k`
+    skill, review the app end to end, and write the report/fix-plan/db-target
+    files. Then call again WITH report=<full report markdown> to file the review
+    into the project's memory. layers: comma-separated subset of
+    holistic,db,etl,backend,api,frontend (default holistic).
+    """
+    from . import arc5k
+
+    active = _get_active(ctx)
+    pid = project_id or active.get("project_id")
+    pslug = slug or active.get("slug")
+    project = hub.resolve_project(project_id=pid, slug=pslug)
+    if not project:
+        return {"ok": False, "error": "No project set — call set_project or resolve_project first"}
+
+    layer_list = [l.strip() for l in layers.split(",")] if layers else None
+
+    if report:
+        try:
+            return arc5k.store_arc5k_report(project["id"], report, layers=layer_list)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
+    return arc5k.build_arc5k_prompt(project, layers=layer_list)
+
+
 def mount_on_fastapi(fastapi_app) -> None:
     """MCP runs on separate port (6972) — see mcp_standalone.py."""
     logger.info("MCP available on port %s (standalone)", os.environ.get("MCP_PORT", "6972"))
