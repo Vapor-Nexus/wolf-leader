@@ -11,6 +11,14 @@
 #
 # Live code mount (development):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Context storage volume (WOLF_LEADER_DATA_DIR):
+#   By default context (SQLite + Markdown) lives in ./data on the host. To store it
+#   elsewhere — a shared folder or a mounted network drive (SMB/NFS) — point
+#   WOLF_LEADER_DATA_DIR at that path in .env, e.g.
+#     WOLF_LEADER_DATA_DIR=/Volumes/team-share/wolf-leader
+#   To attach an NFS share directly (no host mount needed), use the overlay:
+#     docker compose -f docker-compose.yml -f docker-compose.netdrive.yml up -d --build
 
 services:
   wolf-leader:
@@ -32,5 +40,7 @@ services:
       - "${PORT:-6971}:6971"
       - "${MCP_PORT:-6972}:6972"
     volumes:
-      - ./data:/data
+      # Context storage. Override WOLF_LEADER_DATA_DIR in .env to use a shared
+      # folder or a mounted network drive instead of the local ./data dir.
+      - ${WOLF_LEADER_DATA_DIR:-./data}:/data
     restart: unless-stopped

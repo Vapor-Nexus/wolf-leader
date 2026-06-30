@@ -31,7 +31,7 @@ Options:
   -h, --help      This help
 
 Installs under \$CURSOR_DIR:
-  skills/save, skills/new, mcp.json, hooks, rules, wolf-leader.env, AGENTS.md in WORKSPACE
+  skills/save, skills/new, skills/arc5k, mcp.json, hooks, rules, wolf-leader.env, AGENTS.md in WORKSPACE
 EOF
 }
 
@@ -111,6 +111,18 @@ run_step "new-project-session.py" install_file 755 \
   "$CURSOR_EXAMPLES/skills/new/scripts/new-project-session.py" "$CURSOR_DIR/skills/new/scripts/new-project-session.py"
 run_step "new-project-session-curl.sh" install_file 755 \
   "$CURSOR_EXAMPLES/skills/new/scripts/new-project-session-curl.sh" "$CURSOR_DIR/skills/new/scripts/new-project-session-curl.sh"
+
+# Arc5K architecture-review skill — nested tree (prompts/checklists/templates/scripts).
+if [[ "$DRY_RUN" == 1 ]]; then
+  echo "  [dry-run] skills/arc5k"
+elif [[ -d "$CURSOR_EXAMPLES/skills/arc5k" ]]; then
+  mkdir -p "$CURSOR_DIR/skills/arc5k"
+  cp -R "$CURSOR_EXAMPLES/skills/arc5k/." "$CURSOR_DIR/skills/arc5k/"
+  chmod +x "$CURSOR_DIR"/skills/arc5k/scripts/*.sh "$CURSOR_DIR"/skills/arc5k/scripts/*.py 2>/dev/null || true
+  wl_step_ok "skills/arc5k"
+else
+  wl_step_warn "skills/arc5k skipped — not in bundle"
+fi
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "  [dry-run] hooks.json merge"

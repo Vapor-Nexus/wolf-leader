@@ -630,6 +630,30 @@ $("#copy-agent-start-btn").addEventListener("click", async () => {
   if (prompt) copyText(prompt, "Pickup prompt");
 });
 
+$("#arc5k-btn").addEventListener("click", async () => {
+  const pid = state.activeProjectId;
+  if (!pid) return;
+  const btn = $("#arc5k-btn");
+  const p = state.activeProject;
+  btn.classList.add("is-loading");
+  try {
+    const data = await api(`/api/projects/${p?.slug || pid}/arc5k`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (data?.prompt) {
+      await copyText(data.prompt, "Arc5K review prompt");
+      showToast(`Arc5K prompt copied — report will land in ${data.report_dir}`);
+    } else {
+      showToast("Could not build Arc5K prompt");
+    }
+  } catch (err) {
+    showToast(`Arc5K failed: ${String(err)}`);
+  } finally {
+    btn.classList.remove("is-loading");
+  }
+});
+
 $("#copy-full-brief-btn").addEventListener("click", async () => {
   const pid = state.activeProjectId;
   if (!pid) return;

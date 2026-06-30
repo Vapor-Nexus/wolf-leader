@@ -1,0 +1,26 @@
+# Wolf Leader — network-drive context storage overlay.
+#
+# Stores all context (SQLite DB + Markdown projects) on an NFS network share
+# via a named Docker volume, so the data does NOT live on the local host disk.
+#
+# Set these in .env (or your shell), then bring the stack up with this overlay:
+#   WOLF_LEADER_NFS_ADDR=192.168.1.50          # NFS server host/IP
+#   WOLF_LEADER_NFS_PATH=/exports/wolf-leader   # exported path on that server
+#   docker compose -f docker-compose.yml -f docker-compose.netdrive.yml up -d --build
+#
+# Prefer an already-mounted SMB/NFS folder instead? Skip this overlay and just set
+#   WOLF_LEADER_DATA_DIR=/Volumes/your-share/wolf-leader
+# in .env — the base compose file mounts that path directly.
+
+services:
+  wolf-leader:
+    volumes:
+      - wolf-leader-context:/data
+
+volumes:
+  wolf-leader-context:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${WOLF_LEADER_NFS_ADDR:?set WOLF_LEADER_NFS_ADDR in .env},rw,nfsvers=4"
+      device: ":${WOLF_LEADER_NFS_PATH:?set WOLF_LEADER_NFS_PATH in .env}"
