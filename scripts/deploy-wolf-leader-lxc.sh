@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
 # Deploy Wolf Leader production (LXC) from GitHub — standard git pull + docker rebuild.
 #
-# Run on the Proxmox host after pushing to GitHub:
-#   cd /opt/wolf-leader && git pull --ff-only && ./scripts/deploy-wolf-leader-lxc.sh
+# Run on your Proxmox host after pushing to GitHub:
+#   cd /opt/wolf-leader && git pull --ff-only && WOLF_LEADER_VMID=<ctid> ./scripts/deploy-wolf-leader-lxc.sh
 #
-# Or from your Mac:
-#   ./scripts/deploy-prod.sh
+# Or from your workstation:
+#   WOLF_LEADER_PROXMOX_HOST=root@<proxmox-host> WOLF_LEADER_VMID=<ctid> ./scripts/deploy-prod.sh
 #
 set -euo pipefail
 
-VMID="${WOLF_LEADER_VMID:-104}"
+VMID="${WOLF_LEADER_VMID:-}"
 DEST="${WOLF_LEADER_DEST:-/opt/wolf-leader}"
 SRC="${WOLF_LEADER_SRC:-/opt/wolf-leader}"
-REPO="${WOLF_LEADER_REPO:-https://github.com/CorbinRandall/wolf-leader.git}"
+REPO="${WOLF_LEADER_REPO:-}"
 HEALTH_URL="${WOLF_LEADER_HEALTH_URL:-http://127.0.0.1:6971/health}"
 
+if [[ -z "$VMID" ]]; then
+  echo "ERROR: set WOLF_LEADER_VMID to the hub container id" >&2
+  exit 1
+fi
+if [[ -z "$REPO" && -d "$SRC/.git" ]]; then
+  REPO="$(git -C "$SRC" remote get-url origin 2>/dev/null || true)"
+fi
 if [[ -z "${WOLF_LEADER_BRANCH:-}" && -d "$SRC/.git" ]]; then
   WOLF_LEADER_BRANCH="$(git -C "$SRC" rev-parse --abbrev-ref HEAD)"
 fi
@@ -45,6 +52,10 @@ compose_cmd() {
 }
 
 bootstrap_git() {
+  if [[ -z "$REPO" ]]; then
+    echo "ERROR: no git checkout in $DEST; set WOLF_LEADER_REPO to clone one" >&2
+    exit 1
+  fi
   echo "Bootstrapping git in LXC (preserving data/ and .env)..."
   local staging
   staging="$(mktemp -d)"

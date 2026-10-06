@@ -153,7 +153,7 @@ On the **machine where the hub runs**, MCP can use `http://127.0.0.1:6972/mcp`. 
 
 ## Phase 2 — Cursor client (recommended)
 
-Install skills, MCP, hooks, and rules in one step from a wolf-leader checkout:
+Install skills, MCP, and rules in one step from a wolf-leader checkout (hooks are opt-in):
 
 ```bash
 WOLF_LEADER_API=http://YOUR_HOST:6971 \
@@ -167,7 +167,7 @@ This installs:
 
 - **`/save` skill** → `~/.cursor/skills/save/` (reload Cursor window after install)
 - **MCP** → `~/.cursor/mcp.json` (`wolf-leader` server)
-- **Hooks** — `sessionStart` bootstrap recall + `stop` auto-save
+- **Hooks** (only with `WOLF_LEADER_HOOKS=1`) — `sessionStart` bootstrap recall + `stop` auto-save
 - **Rule** — `wolf-leader-hub.mdc` (recall / remember / save)
 - **`AGENTS.md`** symlink in workspace root (optional `WORKSPACE=/root`)
 

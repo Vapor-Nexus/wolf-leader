@@ -42,4 +42,6 @@ jobs:
           git pull --ff-only origin main
 
       - name: Deploy to LXC
+        env:
+          WOLF_LEADER_VMID: ${{ vars.WOLF_LEADER_VMID }}
         run: WOLF_LEADER_BRANCH=main bash /opt/wolf-leader/scripts/deploy-wolf-leader-lxc.sh

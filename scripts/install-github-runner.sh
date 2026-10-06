@@ -3,12 +3,16 @@
 #
 # 1. GitHub → wolf-leader → Settings → Actions → Runners → New self-hosted runner
 # 2. Copy the registration token (expires in ~1 hour)
-# 3. On Proxmox host:
-#      GITHUB_RUNNER_TOKEN='...' ./scripts/install-github-runner.sh
+# 3. On your Proxmox host:
+#      GITHUB_REPO='<owner>/wolf-leader' GITHUB_RUNNER_TOKEN='...' ./scripts/install-github-runner.sh
 #
 set -euo pipefail
 
-REPO="${GITHUB_REPO:-CorbinRandall/wolf-leader}"
+REPO="${GITHUB_REPO:-}"
+if [[ -z "$REPO" ]]; then
+  echo "ERROR: set GITHUB_REPO=<owner>/<repo>" >&2
+  exit 1
+fi
 RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner}"
 RUNNER_NAME="${RUNNER_NAME:-proxmox}"
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,x64,proxmox}"

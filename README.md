@@ -16,7 +16,21 @@ Runs on **any Docker host**: Raspberry Pi, Windows, Linux, macOS, Unraid, cloud 
 - **`/save` pipeline** — auto-extract memories, refresh briefs, archive sessions
 - **Markdown backbone** — `data/projects/{slug}/PROJECT.md` + git-friendly layout (runtime data gitignored)
 
-## Quick start
+## Easy install (Windows / Mac)
+
+- **Windows:** double-click `start.bat`. It builds `dist\WolfLeaderSetup-<version>.exe` the first time
+  (installs Inno Setup via winget if needed) and runs it. Send that `.exe` to anyone.
+- **Mac:** double-click `start.command` (right-click → Open the first time). `installer/mac/build.sh`
+  makes a `.dmg` to share.
+
+The wizard asks whether you already run Wolf Leader, lets you pick what to install (client skills,
+network shares, Git + Python, **Obsidian — recommended**, **wiki — highly recommended**), then gives
+you a prompt to paste into your own AI agent. The agent inspects your machine and replies with a
+strict INI file ([format](installer/CONFIG.md)); paste or load it back, enter share passwords and a
+git name/email, and the installer does the rest. What this fork changes vs upstream:
+[AGENTS.md](AGENTS.md#what-this-fork-does-differently-from-upstream).
+
+## Quick start (manual hub)
 
 ```bash
 git clone git@github.com:YOU/wolf-leader.git && cd wolf-leader
@@ -26,7 +40,7 @@ cp .env.example .env    # set IDE_STORAGE_PUBLIC_URL to your host IP
 
 Open **http://YOUR_HOST:6971** → Setup tab → connect MCP on each client.
 
-**Full guide:** [INSTALL.md](INSTALL.md)
+**Full guide:** [INSTALL.md](INSTALL.md) · **Postgres + pgvector hub on Proxmox/NAS (wolf.local, /wolfhowl, /wolfeat, vault, wiki):** [docs/lxc-hub.md](docs/lxc-hub.md)
 
 ## Ports
 

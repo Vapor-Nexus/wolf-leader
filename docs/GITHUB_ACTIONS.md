@@ -7,21 +7,22 @@
 | Push or PR | **CI** — `pytest` | GitHub cloud runner |
 | Push to `main` | **Deploy** — tests, then prod deploy | Cloud runner + **self-hosted runner on Proxmox** |
 
-Cloud runners cannot reach `192.168.1.x`. Deploy uses a **self-hosted runner** on Proxmox that runs the same script as `./scripts/deploy-prod.sh`.
+Cloud runners cannot reach your LAN. Deploy uses a **self-hosted runner** on Proxmox that runs the same script as `./scripts/deploy-prod.sh`.
 
 ## One-time setup (Proxmox host)
 
-1. Open [Actions → Runners](https://github.com/CorbinRandall/wolf-leader/settings/actions/runners) → **New self-hosted runner** → Linux x64.
+1. Open **Settings → Actions → Runners** in your GitHub repo → **New self-hosted runner** → Linux x64.
 2. Copy the registration token.
-3. On Proxmox (`192.168.1.230`):
+3. On your Proxmox host:
 
 ```bash
 cd /opt/wolf-leader
 git pull
-GITHUB_RUNNER_TOKEN='paste-token-here' ./scripts/install-github-runner.sh
+GITHUB_REPO='<owner>/wolf-leader' GITHUB_RUNNER_TOKEN='paste-token-here' ./scripts/install-github-runner.sh
 ```
 
 4. Confirm the runner shows **Idle** in GitHub Settings.
+5. Add a repository variable `WOLF_LEADER_VMID` (Settings → Secrets and variables → Actions → Variables) set to the hub container id.
 
 ## Daily workflow
 
@@ -34,11 +35,11 @@ git push origin main
 Manual deploy still works:
 
 ```bash
-./scripts/deploy-prod.sh
+WOLF_LEADER_PROXMOX_HOST=root@<proxmox-host> WOLF_LEADER_VMID=<ctid> ./scripts/deploy-prod.sh
 ```
 
 ## Notes
 
 - Merge to `main` triggers production deploy. Feature branches only run tests.
-- The self-hosted runner needs `/opt/wolf-leader` (git clone) and `pct` access to LXC 104 — same as today.
+- The self-hosted runner needs `/opt/wolf-leader` (git clone) and `pct` access to the hub LXC (`WOLF_LEADER_VMID`).
 - Runner service: `systemctl status actions.runner.*`

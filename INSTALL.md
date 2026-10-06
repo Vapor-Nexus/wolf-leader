@@ -50,8 +50,8 @@ Edit `.env`:
 
 ```bash
 # Use the address other machines will use to reach this host
-IDE_STORAGE_PUBLIC_URL=http://192.168.1.100:6971
-IDE_STORAGE_MCP_URL=http://192.168.1.100:6972/mcp
+IDE_STORAGE_PUBLIC_URL=http://<hub-ip>:6971
+IDE_STORAGE_MCP_URL=http://<hub-ip>:6972/mcp
 IDE_STORAGE_HOST_LABEL=homelab   # optional — appears in agent pickup prompts
 ```
 
@@ -150,7 +150,7 @@ Create `docker-compose.local.yml` for personal overrides without editing committ
 **One-command install (recommended):**
 
 ```bash
-git clone git@github.com:CorbinRandall/wolf-leader.git
+git clone git@github.com:YOU/wolf-leader.git
 cd wolf-leader
 WOLF_LEADER_API=http://YOUR_HOST:6971 \
 WOLF_LEADER_MCP=http://YOUR_HOST:6972/mcp \
@@ -164,7 +164,7 @@ This installs into `~/.cursor/`:
 |-------|------|
 | `/save` skill | `skills/save/SKILL.md` |
 | MCP | `mcp.json` (`wolf-leader` + legacy `ide-storage` key) |
-| Hooks | `hooks.json`, `hooks/wolf-leader-*.sh` |
+| Hooks (opt-in, `WOLF_LEADER_HOOKS=1`) | `hooks.json`, `hooks/wolf-leader-*.sh` |
 | Rule | `rules/wolf-leader-hub.mdc` |
 | Hub URLs | `wolf-leader.env` |
 

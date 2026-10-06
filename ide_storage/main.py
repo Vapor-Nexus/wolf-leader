@@ -70,6 +70,14 @@ async def lifespan(app: FastAPI):
     stubs = sync_all_stubs()
     logger.info("Synced %d IDE_CONTEXT.md stubs", len(stubs))
     logger.info("Database initialized")
+    # Mirrors: make sure the vault + wiki reflect Postgres at boot (debounced build).
+    try:
+        from .mirrors import refresh_mirrors
+
+        boot = refresh_mirrors(None)
+        logger.info("Mirrors refreshed at boot: %s", {k: (v if isinstance(v, dict) and v.get("error") else "ok") for k, v in boot.items()})
+    except Exception:  # noqa: BLE001
+        logger.exception("mirror refresh at boot failed")
     yield
 
 
@@ -86,6 +94,17 @@ app.add_middleware(
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+from .api_wolf import router as wolf_router  # noqa: E402
+
+app.include_router(wolf_router)
+
+# Native wiki (Fumadocs static export, Halo theme). Built into wiki/out by the
+# Dockerfile and rebuilt by the hub after saves/howls. Same container, no second
+# web server. check_dir=False so a missing build 404s instead of breaking the API.
+from .wiki_export import OUT_DIR as _WIKI_OUT  # noqa: E402
+
+app.mount("/wiki", StaticFiles(directory=str(_WIKI_OUT), html=True, check_dir=False), name="wiki")
 
 # Pydantic models
 class MessageCreate(BaseModel):
@@ -192,21 +211,6 @@ class MemoryUpdate(BaseModel):
     type: Optional[str] = None
     content: Optional[str] = None
     semantic_descriptor: Optional[str] = None
-
-
-class SnippetCreate(BaseModel):
-    title: Optional[str] = None
-    language: Optional[str] = None
-    content: str
-    project_id: Optional[int] = None
-    tags: Optional[List[str]] = None
-
-
-class SnippetUpdate(BaseModel):
-    title: Optional[str] = None
-    language: Optional[str] = None
-    content: Optional[str] = None
-    tags: Optional[List[str]] = None
 
 
 @app.get("/")
@@ -1032,12 +1036,6 @@ async def delete_project(project_id: int):
 
     with db_conn() as conn:
         cur = conn.cursor()
-        # snippets.project_id is a FK with no ON DELETE action; with
-        # foreign_keys=ON a delete would otherwise be blocked. Detach them.
-        cur.execute(
-            "UPDATE snippets SET project_id = NULL WHERE project_id = ?",
-            (project_id,),
-        )
         cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         
@@ -1556,141 +1554,28 @@ async def delete_memory(memory_id: int):
     return {"message": "Memory deleted", "project_id": project_id}
 
 
-# Snippet endpoints
-@app.post("/api/snippets")
-async def create_snippet(snippet: SnippetCreate):
-    """Create a new code snippet."""
-    now = datetime.utcnow().isoformat()
-    tags_json = None
-    if snippet.tags:
-        import json
-        tags_json = json.dumps(snippet.tags)
-    
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO snippets (title, language, content, project_id, created_at, updated_at, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (snippet.title, snippet.language, snippet.content, snippet.project_id, now, now, tags_json)
-        )
-        snippet_id = cur.lastrowid
-        conn.commit()
-    
-    return {"id": snippet_id, "message": "Snippet created successfully"}
-
-
-@app.get("/api/snippets")
-async def list_snippets(
-    project_id: Optional[int] = None,
-    language: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
-):
-    """List snippets with optional filtering."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        
-        query = "SELECT * FROM snippets WHERE 1=1"
-        params = []
-        
-        if project_id:
-            query += " AND project_id = ?"
-            params.append(project_id)
-        
-        if language:
-            query += " AND language = ?"
-            params.append(language)
-        
-        query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-        
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        
-        snippets = [dict(row) for row in rows]
-        return {"snippets": snippets, "count": len(snippets)}
-
-
-@app.get("/api/snippets/{snippet_id}")
-async def get_snippet(snippet_id: int):
-    """Get a specific snippet by ID."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM snippets WHERE id = ?", (snippet_id,))
-        row = cur.fetchone()
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-        
-        return dict(row)
-
-
-@app.put("/api/snippets/{snippet_id}")
-async def update_snippet(snippet_id: int, snippet: SnippetUpdate):
-    """Update a snippet."""
-    import json
-    
-    updates = []
-    params = []
-    
-    if snippet.title is not None:
-        updates.append("title = ?")
-        params.append(snippet.title)
-    
-    if snippet.language is not None:
-        updates.append("language = ?")
-        params.append(snippet.language)
-    
-    if snippet.content is not None:
-        updates.append("content = ?")
-        params.append(snippet.content)
-    
-    if snippet.tags is not None:
-        updates.append("tags = ?")
-        params.append(json.dumps(snippet.tags))
-    
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    
-    updates.append("updated_at = ?")
-    params.append(datetime.utcnow().isoformat())
-    params.append(snippet_id)
-    
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            f"UPDATE snippets SET {', '.join(updates)} WHERE id = ?",
-            params
-        )
-        conn.commit()
-        
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-    
-    return {"message": "Snippet updated successfully"}
-
-
-@app.delete("/api/snippets/{snippet_id}")
-async def delete_snippet(snippet_id: int):
-    """Delete a snippet."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM snippets WHERE id = ?", (snippet_id,))
-        conn.commit()
-        
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-    
-    return {"message": "Snippet deleted successfully"}
-
-
 # Health check
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": SERVICE_ID, "product": PRODUCT_NAME}
+    """Health check: API up, Postgres reachable, pgvector present, embeddings state."""
+    from ide_storage.db import vector_available
+    from ide_storage.embeddings import embeddings_status
+
+    db_ok = True
+    db_error = None
+    try:
+        with db_conn() as conn:
+            conn.cursor().execute("SELECT 1")
+    except Exception as exc:  # noqa: BLE001
+        db_ok = False
+        db_error = str(exc)
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "service": SERVICE_ID,
+        "product": PRODUCT_NAME,
+        "database": {"ok": db_ok, "pgvector": vector_available() if db_ok else False, "error": db_error},
+        "embeddings": embeddings_status(),
+    }
 
 
 if __name__ == "__main__":

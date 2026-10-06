@@ -16,6 +16,7 @@ INSTALL_FROM_HUB = REPO_ROOT / "scripts" / "install-client-from-hub.sh"
 VERIFY_SCRIPT = REPO_ROOT / "scripts" / "verify-cursor-client.sh"
 PREFLIGHT_SCRIPT = REPO_ROOT / "scripts" / "preflight-cursor-client.sh"
 CLIENT_LIB = REPO_ROOT / "scripts" / "lib" / "wolf-leader-client.sh"
+BACKFILL_SCRIPT = REPO_ROOT / "scripts" / "wolf-backfill.py"
 AGENTS_MD = REPO_ROOT / "examples" / "AGENTS.md"
 
 BUNDLE_SCRIPTS = (
@@ -24,6 +25,7 @@ BUNDLE_SCRIPTS = (
     VERIFY_SCRIPT,
     PREFLIGHT_SCRIPT,
     CLIENT_LIB,
+    BACKFILL_SCRIPT,
     AGENTS_MD,
 )
 
@@ -88,7 +90,7 @@ If curl pipe fails:
   mkdir -p /tmp/wl-client && tar xzf /tmp/wl-client.tar.gz -C /tmp/wl-client
   WOLF_LEADER_API={api} WOLF_LEADER_MCP={mcp} WORKSPACE=<WORKSPACE> /tmp/wl-client/scripts/install-cursor-client.sh
 
-Reload the Cursor window. /save and /new should appear in the slash menu.
+Reload the Cursor window. /save, /new, /wolfhowl and /wolfeat should appear in the slash menu.
 
 ## Step 5 — Verify
 curl -s "{api}/health"
@@ -96,11 +98,12 @@ MCP: resolve_project + recall — or curl "{api}/api/bootstrap?path=<WORKSPACE>"
 Place AGENTS.md in the workspace root (included in the hub client bundle).
 
 ## Step 6 — Every session
-Start: resolve_project({{ path: "<WORKSPACE>" }}) → recall() or get_brief()
+Start: /wolfeat (Cursor) or MCP wolfeat — pulls brief, memories, latest howls (with git SHA), open jobs
 During: remember() for durable decisions
-End: /save (Cursor) or MCP save_session
+End: /save for a light checkpoint, /wolfhowl (or MCP wolfhowl) to broadcast: save + git state + embed + catalog + Obsidian notes
+Guides: {api}/api/howl-guide and {api}/api/eat-guide. Wiki: {api}/wiki/
 
-Report: OS, agent/IDE, WORKSPACE used, MCP connected, hub health OK, and whether /save is available.
+Report: OS, agent/IDE, WORKSPACE used, MCP connected, hub health OK, and whether /save, /wolfhowl, /wolfeat are available.
 """
 
 
@@ -141,7 +144,7 @@ def build_client_bundle() -> bytes:
 
     if CURSOR_EXAMPLES.is_dir():
         for path in CURSOR_EXAMPLES.rglob("*"):
-            if path.is_file():
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
                 rel = path.relative_to(REPO_ROOT)
                 paths.append((path, str(rel)))
 

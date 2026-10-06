@@ -34,7 +34,9 @@ function formatDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
   if (Number.isNaN(d.getTime())) return (iso || "").slice(0, 16).replace("T", " ");
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  // HH:MM MM/DD/YYYY in the browser's local time.
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())} ${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()}`;
 }
 
 function escapeHtml(s) {

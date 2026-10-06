@@ -89,6 +89,8 @@ if [[ "$DRY_RUN" == 0 ]]; then
   mkdir -p \
     "$CURSOR_DIR/skills/save/scripts" \
     "$CURSOR_DIR/skills/new/scripts" \
+    "$CURSOR_DIR/skills/wolfhowl/scripts" \
+    "$CURSOR_DIR/skills/wolfeat/scripts" \
     "$CURSOR_DIR/hooks" \
     "$CURSOR_DIR/rules"
   rm -rf "$CURSOR_DIR/skills/save-new"
@@ -112,15 +114,35 @@ run_step "new-project-session.py" install_file 755 \
 run_step "new-project-session-curl.sh" install_file 755 \
   "$CURSOR_EXAMPLES/skills/new/scripts/new-project-session-curl.sh" "$CURSOR_DIR/skills/new/scripts/new-project-session-curl.sh"
 
-if [[ "$DRY_RUN" == 1 ]]; then
-  echo "  [dry-run] hooks.json merge"
-elif ! wl_merge_hooks_json "$CURSOR_DIR/hooks.json" "$CURSOR_EXAMPLES/hooks.json"; then
-  INSTALL_FAIL=1
+run_step "skills/wolfhowl" install_file 644 \
+  "$CURSOR_EXAMPLES/skills/wolfhowl/SKILL.md" "$CURSOR_DIR/skills/wolfhowl/SKILL.md"
+run_step "wolfhowl.sh" install_file 755 \
+  "$CURSOR_EXAMPLES/skills/wolfhowl/scripts/wolfhowl.sh" "$CURSOR_DIR/skills/wolfhowl/scripts/wolfhowl.sh"
+run_step "wolfhowl.py" install_file 755 \
+  "$CURSOR_EXAMPLES/skills/wolfhowl/scripts/wolfhowl.py" "$CURSOR_DIR/skills/wolfhowl/scripts/wolfhowl.py"
+run_step "sync_share.py" install_file 755 \
+  "$CURSOR_EXAMPLES/skills/wolfhowl/scripts/sync_share.py" "$CURSOR_DIR/skills/wolfhowl/scripts/sync_share.py"
+
+run_step "skills/wolfeat" install_file 644 \
+  "$CURSOR_EXAMPLES/skills/wolfeat/SKILL.md" "$CURSOR_DIR/skills/wolfeat/SKILL.md"
+run_step "wolfeat.sh" install_file 755 \
+  "$CURSOR_EXAMPLES/skills/wolfeat/scripts/wolfeat.sh" "$CURSOR_DIR/skills/wolfeat/scripts/wolfeat.sh"
+
+# Hooks are opt-in (WOLF_LEADER_HOOKS=1). The rule + MCP do the recall/save work; shell hooks
+# on Windows open .sh files in the editor and the stop hook cannot see a remote hub's transcript.
+if [[ "${WOLF_LEADER_HOOKS:-0}" == 1 ]]; then
+  if [[ "$DRY_RUN" == 1 ]]; then
+    echo "  [dry-run] hooks.json merge"
+  elif ! wl_merge_hooks_json "$CURSOR_DIR/hooks.json" "$CURSOR_EXAMPLES/hooks.json"; then
+    INSTALL_FAIL=1
+  fi
+  run_step "recall hook" install_file 755 \
+    "$CURSOR_EXAMPLES/hooks/wolf-leader-recall.sh" "$CURSOR_DIR/hooks/wolf-leader-recall.sh"
+  run_step "save hook" install_file 755 \
+    "$CURSOR_EXAMPLES/hooks/wolf-leader-save.sh" "$CURSOR_DIR/hooks/wolf-leader-save.sh"
+else
+  wl_step_skip "hooks (off by default; set WOLF_LEADER_HOOKS=1 to install)"
 fi
-run_step "recall hook" install_file 755 \
-  "$CURSOR_EXAMPLES/hooks/wolf-leader-recall.sh" "$CURSOR_DIR/hooks/wolf-leader-recall.sh"
-run_step "save hook" install_file 755 \
-  "$CURSOR_EXAMPLES/hooks/wolf-leader-save.sh" "$CURSOR_DIR/hooks/wolf-leader-save.sh"
 
 run_step "wolf-leader-hub rule" install_file 644 \
   "$CURSOR_EXAMPLES/rules/wolf-leader-hub.mdc" "$CURSOR_DIR/rules/wolf-leader-hub.mdc"
