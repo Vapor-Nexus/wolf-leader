@@ -1,15 +1,15 @@
 #!/bin/bash
-# Mac: double-click this after cloning Wolf Leader to run the setup wizard.
+# Mac: double-click after cloning Wolf Leader. Builds the app (first time only) and opens it;
+# setup runs inside the app.
 # If macOS says it "cannot be opened": right-click > Open, or run  chmod +x start.command
 cd "$(dirname "$0")" || exit 1
-echo "Wolf Leader setup"
-echo "Setup windows will pop up; this Terminal window shows the progress."
-echo ""
-/bin/bash "installer/mac/Wolf Leader Setup.command"
-rc=$?
-echo ""
-if [ "$rc" -eq 0 ]; then
-  echo "All done. You can close this window."
-else
-  echo "Setup did not finish (code $rc). Details: ~/Library/Logs/WolfLeader/install.log"
+APP="dist/Wolf Leader.app"
+if [ ! -d "$APP" ] || [ "${1-}" = "--rebuild" ]; then
+  echo "Building Wolf Leader (first run takes a minute or two)..."
+  if ! /bin/bash installer/mac/build-app.sh; then
+    echo ""
+    echo "Build failed. Needs macOS 14+ with Xcode or the Command Line Tools (xcode-select --install)."
+    exit 1
+  fi
 fi
+open "$APP"

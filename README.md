@@ -70,7 +70,7 @@ account needed.
 | | |
 |---|---|
 | **Windows** | Double-click `start.bat`. It builds `dist\WolfLeaderSetup-<version>.exe` (installing Inno Setup if needed) and runs it. |
-| **Mac** | Double-click `start.command`. To make a `.dmg` to share, run `bash installer/mac/build.sh` on a Mac. First launch: right-click → Open (macOS 15: System Settings → Privacy & Security → Open Anyway). |
+| **Mac** | Open the `.dmg` and drag **Wolf Leader** to Applications. Setup runs in the app on first launch, then it becomes your dashboard: stats, recent chats, projects, search, shares and updates. From a clone, double-click `start.command` or run `bash installer/mac/build-app.sh` (macOS 14+, Xcode or Command Line Tools). First launch: right-click → Open (macOS 15+: System Settings → Privacy & Security → Open Anyway). |
 
 The wizard takes a few minutes:
 

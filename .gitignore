@@ -51,6 +51,8 @@ talk-simply.zip
 dist/
 installer/windows/Output/
 *.dmg
+installer/mac/WolfLeaderApp/.build/
+installer/mac/WolfLeaderApp/.swiftpm/
 
 # Python
 __pycache__/

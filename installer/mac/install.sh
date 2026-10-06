@@ -1,6 +1,7 @@
 #!/bin/bash
-# Wolf Leader for macOS: does the actual install. The wizard (wizard.sh) collects the answers and
-# calls this; it can also be run by hand. Contract: installer/CONFIG.md ("What install does").
+# Wolf Leader for macOS: does the actual install. The Wolf Leader app's first-launch setup collects
+# the answers and calls this; it can also be run by hand. Contract: installer/CONFIG.md.
+# Each phase starts with a "==> <Step name>" line; the app turns those into its live checklist.
 #
 #   install.sh --ini wolf-leader-setup.ini --mode new|connect|update \
 #              [--toggles client,shares,prereqs,obsidian,wiki] \
@@ -86,7 +87,7 @@ NOTES=""
 WOLF_MOUNT=""
 
 say() { printf '%s\n' "$*"; }
-step() { printf '\n== %s\n' "$*"; }
+step() { printf '\n==> %s\n' "$*"; }
 ok() { printf '  ok    %s\n' "$*"; }
 skip() { printf '  skip  %s\n' "$*"; }
 warn() {
@@ -349,7 +350,7 @@ if [ "$MODE" = new ]; then
     [ "$DRY" = 1 ] || for _ in $(seq 1 30); do has docker && break; sleep 2; done
   fi
   if ! has docker; then
-    fatal "Docker is not installed. Install Docker Desktop for Mac (https://www.docker.com/products/docker-desktop/), start it once, then run Wolf Leader Setup again."
+    fatal "Docker is not installed. Install Docker Desktop for Mac (https://www.docker.com/products/docker-desktop/), start it once, then run Wolf Leader setup again."
   else
     if ! docker info >/dev/null 2>&1; then
       say "  Docker is installed but not running; starting Docker Desktop (can take a minute)..."
@@ -359,7 +360,7 @@ if [ "$MODE" = new ]; then
       fi
     fi
     if [ "$DRY" = 0 ] && ! docker info >/dev/null 2>&1; then
-      fatal "Docker Desktop did not start. Open Docker, wait for it to say it is running, then run Wolf Leader Setup again."
+      fatal "Docker Desktop did not start. Open Docker, wait for it to say it is running, then run Wolf Leader setup again."
     fi
     if docker compose version >/dev/null 2>&1; then
       COMPOSE="docker compose"
@@ -368,7 +369,7 @@ if [ "$MODE" = new ]; then
     elif [ "$DRY" = 1 ]; then
       COMPOSE="docker compose"
     else
-      fatal "Docker Compose is missing. Update Docker Desktop, then run Wolf Leader Setup again."
+      fatal "Docker Compose is missing. Update Docker Desktop, then run Wolf Leader setup again."
     fi
     ok "docker: $(docker --version 2>/dev/null || echo present)"
   fi
@@ -382,7 +383,7 @@ if has_toggle prereqs; then
     ok "git: $(git --version 2>/dev/null)"
   elif [ "$IS_MAC" = 1 ] && ! clt_ok || [ "$IS_MAC" = 0 ]; then
     run xcode-select --install || true
-    warn "Apple's Command Line Tools installer was opened (it provides git). Click Install, wait for it to finish, then run Wolf Leader Setup again so git steps complete."
+    warn "Apple's Command Line Tools installer was opened (it provides git). Click Install, wait for it to finish, then run Wolf Leader setup again so git steps complete."
   elif has brew; then
     run brew install git || warn "brew install git failed"
   else
@@ -492,7 +493,7 @@ if ! has_toggle shares; then
 elif [ -z "$SHARES" ]; then
   skip "the answer file lists no shares"
 else
-  note "macOS may ask to let Wolf Leader Setup control System Events (to add shares to Login Items). Click OK."
+  note "macOS may ask to let Wolf Leader control System Events (to add shares to Login Items). Click OK."
   for s in $SHARES; do
     url=$(wl_cfg "$s" smb_url)
     user=$(wl_cfg "$s" user)
@@ -727,7 +728,7 @@ if [ "$MODE" = new ]; then
   say "  Building and starting the hub. The first build downloads a lot and can take 10-15 minutes."
   # shellcheck disable=SC2086
   if ! run_in "$HUB_DIR" $COMPOSE -f docker-compose.postgres.yml up -d --build; then
-    fatal "docker compose failed (see the log above). Fix it, then run Wolf Leader Setup again."
+    fatal "docker compose failed (see the log above). Fix it, then run Wolf Leader setup again."
   fi
 
   PORT=$(awk -F= '$1 == "PORT" { print $2 }' "$ENV_FILE" 2>/dev/null | tail -n 1)

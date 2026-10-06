@@ -178,36 +178,11 @@ def whatsnew_cards() -> str:
 SPLITS = [58, 42, 48, 52]
 
 
-# ---------------------------------------------------------------- dmg background (640x400 @2x)
-def dmg_background() -> str:
-    css = """
-    .wrap { height:100%; padding:38px 48px 30px; display:flex; flex-direction:column; align-items:center; text-align:center; }
-    .hey { font-size:15px; font-weight:600; color:var(--text-muted); }
-    .titlerow { display:flex; align-items:center; gap:12px; margin-top:6px; }
-    .titlerow .appicon { display:block; filter:drop-shadow(0 2px 6px rgba(29,25,22,0.08)) drop-shadow(0 8px 16px rgba(29,25,22,0.08)); }
-    h1 { font-size:30px; font-weight:800; color:var(--text-strong); letter-spacing:-0.02em; line-height:1.1; }
-    .sub { font-size:13px; line-height:1.45; color:var(--text-muted); max-width:470px; margin-top:10px; }
-    .chips { display:flex; gap:10px; margin-top:auto; }
-    .hint { font-size:12px; margin-top:14px; }
-    """
-    chips = "".join(chip(c["hue"], c["icon"], 28, 15, 10) for c in CARDS)
-    body = (
-        '<div class="wrap"><div class="hey">Hey 👋</div>'
-        f'<div class="titlerow">{app_icon(40)}<h1>Wolf Leader, now on autopilot</h1></div>'
-        '<p class="sub">v1 gave every agent you use one shared memory, with briefs and handoffs that just work. '
-        "That was the hard part. This update builds on it so the remembering happens on its own.</p>"
-        f'<div class="chips">{chips}</div>'
-        '<div class="meta hint">drag nothing — just double-click Wolf Leader Setup</div></div>'
-    )
-    return page(css, body)
-
-
 # name, builder, css width, css height, scale, transparent, output formats
 JOBS = [
     ("wizard-side", wizard_side, 164, 314, 2, False, ["bmp"]),
     ("whatsnew-cards", whatsnew_cards, 417, 237, 2, False, ["bmp"]),
     ("whatsnew-cards", whatsnew_cards, 417, 237, 4, False, ["png"]),
-    ("dmg-background", dmg_background, 640, 400, 2, False, ["png"]),
 ]
 
 OVERFLOW_JS = """() => {
