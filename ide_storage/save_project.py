@@ -5,13 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ide_storage.branding import PRODUCT_NAME
-from ide_storage.db import db_file
+from ide_storage.db import connect, db_file
 from ide_storage.import_all_transcripts import CATCH_ALL_PROJECT_ID, TRANSCRIPTS_ROOT
 from ide_storage.post_save_pipeline import _sync_session, post_save_pipeline
 from ide_storage.hub import resolve_project, save_session
@@ -55,6 +54,31 @@ def find_transcript(
     return sid, path
 
 
+def existing_chat_project(session_id: str | None) -> dict[str, Any] | None:
+    """Project a session's chat is already filed under (ignores the catch-all)."""
+    if not session_id:
+        return None
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute("SELECT project_id FROM chats WHERE session_id = ?", (session_id,))
+    row = cur.fetchone()
+    conn.close()
+    pid = row["project_id"] if row else None
+    if pid is None or pid == CATCH_ALL_PROJECT_ID:
+        return None
+    project = resolve_project(project_id=pid)
+    if not project:
+        return None
+    return {
+        "matched": True,
+        "project_id": pid,
+        "slug": project.get("slug"),
+        "name": project.get("name"),
+        "confidence": "existing",
+        "reasons": ["chat already filed under this project (matched by session id)"],
+    }
+
+
 def link_chat_to_project(
     session_id: str,
     project_id: int,
@@ -63,8 +87,7 @@ def link_chat_to_project(
     force: bool = False,
 ) -> dict[str, Any] | None:
     """Assign project_id to chat for session before distill."""
-    conn = sqlite3.connect(db_path or db_file())
-    conn.row_factory = sqlite3.Row
+    conn = connect()
     cur = conn.cursor()
     cur.execute("SELECT id, project_id, title FROM chats WHERE session_id = ?", (session_id,))
     row = cur.fetchone()
@@ -104,20 +127,24 @@ def save_from_conversation(
     workspace_path: str | None = None,
     session_id: str | None = None,
     db_path: Path | None = None,
+    occurred_at: str | None = None,
+    transcript_mtime: float | None = None,
 ) -> dict[str, Any]:
     """Save an in-context agent conversation (Claude, etc.) — no Cursor transcript."""
     import uuid
 
     report: dict[str, Any] = {"ok": False, "steps": [], "source": "conversation"}
-    if not messages:
-        report["error"] = "messages array is required when no Cursor transcript exists"
+    if not messages and not (content and content.strip()):
+        report["error"] = "messages array or a content summary is required when no Cursor transcript exists"
         return report
+    if not messages:
+        report["source"] = "summary"
 
     text = "\n".join(
         (m.get("content") or "").strip()
         for m in messages
         if (m.get("content") or "").strip()
-    )
+    ) or (content or "")
     workspace = workspace_path or os.environ.get("CURSOR_WORKSPACE") or ""
     match: dict[str, Any] | None = None
     project_id: int | None = None
@@ -136,6 +163,9 @@ def save_from_conversation(
             "confidence": "explicit",
             "reasons": [f"user specified slug {project_slug}"],
         }
+    elif existing := existing_chat_project(session_id):
+        project_id = existing["project_id"]
+        match = existing
     else:
         hit = best_project_match(text, db_path=db_path or db_file(), workspace_path=workspace or None)
         if hit:
@@ -164,8 +194,11 @@ def save_from_conversation(
         workspace_path=workspace or None,
         project_id=project_id,
         messages=messages,
+        occurred_at=occurred_at,
+        transcript_mtime=transcript_mtime,
     )
     report["steps"].append({"save_session": saved})
+    report["occurred_at"] = saved.get("occurred_at")
 
     # Never force a relink here: the project was already chosen above from the
     # FULL message text (explicit slug or best_project_match). Forcing a relink
@@ -207,6 +240,7 @@ def save_project(
     root: Path = TRANSCRIPTS_ROOT,
     db_path: Path | None = None,
     force_relink: bool = True,
+    occurred_at: str | None = None,
 ) -> dict[str, Any]:
     """
     Save into Wolf Leader — agent transcript and/or in-context messages.
@@ -224,12 +258,26 @@ def save_project(
             workspace_path=workspace_path,
             session_id=session_id,
             db_path=db_path,
+            occurred_at=occurred_at,
         )
 
     report: dict[str, Any] = {"ok": False, "steps": [], "source": "cursor_transcript"}
 
     sid, transcript = find_transcript(session_id, root=root)
     if not sid or not transcript:
+        if content and content.strip():
+            # Remote hub, no transcript on this disk: a summary-only checkpoint
+            # (what the background agent flow sends) is still a valid save.
+            return save_from_conversation(
+                title=title or "Checkpoint",
+                messages=[],
+                content=content,
+                project_slug=project_slug,
+                workspace_path=workspace_path,
+                session_id=session_id,
+                db_path=db_path,
+                occurred_at=occurred_at,
+            )
         report["error"] = f"No Cursor transcript found under {root}"
         return report
 
@@ -253,6 +301,8 @@ def save_project(
             "confidence": "explicit",
             "reasons": [f"user specified slug {project_slug}"],
         }
+    elif existing := existing_chat_project(sid):
+        match = existing
     else:
         match = guess_project_from_transcript(
             transcript, db_path=db_path or db_file(), workspace_path=workspace
@@ -268,6 +318,7 @@ def save_project(
         return report
 
     relink_force = force_relink or (match or {}).get("confidence") in (
+        "existing",
         "high",
         "explicit",
         "medium",
@@ -286,7 +337,9 @@ def save_project(
         sid,
         sync=False,
         root=root,
-        force_relink=relink_force and not project_slug,
+        force_relink=relink_force
+        and not project_slug
+        and (match or {}).get("confidence") != "existing",
     )
     report["steps"].append({"pipeline": {k: pipeline.get(k) for k in (
         "ok", "error", "project_linked", "project_slug", "project_name",

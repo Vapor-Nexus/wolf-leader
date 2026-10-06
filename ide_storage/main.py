@@ -18,9 +18,9 @@ import uvicorn
 
 from .branding import MCP_SERVER_KEY, PRODUCT_NAME, PRODUCT_TAGLINE, SERVICE_ID
 from .client_setup import (
+    LEGACY_PROFILE_IDS,
     build_client_bundle,
-    list_profiles,
-    profile_payload,
+    client_setup_payload,
     read_install_script,
 )
 
@@ -70,6 +70,14 @@ async def lifespan(app: FastAPI):
     stubs = sync_all_stubs()
     logger.info("Synced %d IDE_CONTEXT.md stubs", len(stubs))
     logger.info("Database initialized")
+    # Mirrors: make sure the vault + wiki reflect Postgres at boot (debounced build).
+    try:
+        from .mirrors import refresh_mirrors
+
+        boot = refresh_mirrors(None)
+        logger.info("Mirrors refreshed at boot: %s", {k: (v if isinstance(v, dict) and v.get("error") else "ok") for k, v in boot.items()})
+    except Exception:  # noqa: BLE001
+        logger.exception("mirror refresh at boot failed")
     yield
 
 
@@ -86,6 +94,17 @@ app.add_middleware(
 
 if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+from .api_wolf import router as wolf_router  # noqa: E402
+
+app.include_router(wolf_router)
+
+# Native wiki (Fumadocs static export, Halo theme). Built into wiki/out by the
+# Dockerfile and rebuilt by the hub after saves/howls. Same container, no second
+# web server. check_dir=False so a missing build 404s instead of breaking the API.
+from .wiki_export import OUT_DIR as _WIKI_OUT  # noqa: E402
+
+app.mount("/wiki", StaticFiles(directory=str(_WIKI_OUT), html=True, check_dir=False), name="wiki")
 
 # Pydantic models
 class MessageCreate(BaseModel):
@@ -147,9 +166,17 @@ class ProjectMdUpdate(BaseModel):
     content: str
 
 
+class LeftOffUpdate(BaseModel):
+    """Saved 'where we left off' spot for a project."""
+    content: Optional[str] = None
+    # When true, regenerate SPEC so pickup reflects the saved spot immediately.
+    distill: bool = True
+
+
 class SaveMessage(BaseModel):
     role: str
     content: str
+    created_at: Optional[str] = None  # when this message happened (ISO)
 
 
 class SaveProjectBody(BaseModel):
@@ -159,6 +186,8 @@ class SaveProjectBody(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     messages: Optional[List[SaveMessage]] = None
+    # When the conversation actually happened (ISO). Logbook sorts by this, not save time.
+    occurred_at: Optional[str] = None
 
 
 class ProjectMatchBody(BaseModel):
@@ -184,27 +213,15 @@ class MemoryUpdate(BaseModel):
     semantic_descriptor: Optional[str] = None
 
 
-class SnippetCreate(BaseModel):
-    title: Optional[str] = None
-    language: Optional[str] = None
-    content: str
-    project_id: Optional[int] = None
-    tags: Optional[List[str]] = None
-
-
-class SnippetUpdate(BaseModel):
-    title: Optional[str] = None
-    language: Optional[str] = None
-    content: Optional[str] = None
-    tags: Optional[List[str]] = None
-
-
 @app.get("/")
 async def web_ui():
     """Chat directory web UI."""
     index = STATIC_DIR / "index.html"
     if index.is_file():
-        return FileResponse(index)
+        return FileResponse(
+            index,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
     return {"message": f"{PRODUCT_NAME} API", "docs": "/docs"}
 
 
@@ -1019,12 +1036,6 @@ async def delete_project(project_id: int):
 
     with db_conn() as conn:
         cur = conn.cursor()
-        # snippets.project_id is a FK with no ON DELETE action; with
-        # foreign_keys=ON a delete would otherwise be blocked. Detach them.
-        cur.execute(
-            "UPDATE snippets SET project_id = NULL WHERE project_id = ?",
-            (project_id,),
-        )
         cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         
@@ -1140,7 +1151,10 @@ async def save_project_checkpoint(body: SaveProjectBody = SaveProjectBody()):
 
     messages = None
     if body.messages:
-        messages = [{"role": m.role, "content": m.content} for m in body.messages]
+        messages = [
+            {"role": m.role, "content": m.content, **({"created_at": m.created_at} if m.created_at else {})}
+            for m in body.messages
+        ]
 
     try:
         report = save_project(
@@ -1150,6 +1164,7 @@ async def save_project_checkpoint(body: SaveProjectBody = SaveProjectBody()):
             title=body.title,
             content=body.content,
             messages=messages,
+            occurred_at=body.occurred_at,
         )
     except Exception as exc:
         logger.exception("save-project failed")
@@ -1238,6 +1253,76 @@ async def distill_one_project(project_id: int):
     return result
 
 
+def _left_off_context(project_id: int) -> tuple[dict, dict]:
+    """Load project + activity-log payload."""
+    from .hub import _activity_log_sessions
+    from .left_off import left_off_payload, log_entry_from_chat
+    from .project_archetypes import pickup_prompt
+
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project = dict(row)
+        log_rows = _activity_log_sessions(cur, project_id, 25)
+
+    slug = project.get("slug") or f"project-{project_id}"
+    public = os.environ.get("IDE_STORAGE_PUBLIC_URL", "http://127.0.0.1:6971").rstrip("/")
+    brief_url = f"{public}/api/projects/{slug}/agent-brief"
+    default_pickup = pickup_prompt(project, public_base=public)
+    entries = []
+    for r in log_rows:
+        entry = log_entry_from_chat(r)
+        entry["web"] = f"{public}/?chat={r['id']}"
+        entries.append(entry)
+    payload = left_off_payload(
+        project,
+        brief_url=brief_url,
+        log_entries=entries,
+        default_pickup=default_pickup,
+    )
+    return project, payload
+
+
+@app.get("/api/projects/{project_id}/where-left-off")
+async def get_where_left_off(project_id: int):
+    """Activity log + latest where-we-left-off snapshot (filled on each /save)."""
+    _, payload = _left_off_context(project_id)
+    return payload
+
+
+@app.put("/api/projects/{project_id}/where-left-off")
+async def put_where_left_off(project_id: int, body: LeftOffUpdate):
+    """Optional manual override (prefer /save auto log). Kept for API compatibility."""
+    import json
+
+    from .left_off import metadata_with_left_off
+
+    project, _ = _left_off_context(project_id)
+    meta = metadata_with_left_off(project, body.content)
+    now = datetime.utcnow().isoformat()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE projects SET metadata = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(meta), now, project_id),
+        )
+        conn.commit()
+
+    distill_result = None
+    if body.distill:
+        try:
+            distill_result = distill_spec(project_id)
+        except Exception as exc:  # noqa: BLE001
+            distill_result = {"error": str(exc)}
+
+    _, payload = _left_off_context(project_id)
+    payload["distill"] = distill_result
+    return payload
+
+
 @app.get("/api/projects/{project_id}/agent-context")
 async def get_project_agent_context(project_id: int):
     with db_conn() as conn:
@@ -1271,9 +1356,9 @@ async def get_index(regenerate: bool = False):
 
 
 @app.get("/api/client-setup")
-def api_client_setup_list():
-    """List client profiles and hub URLs for Setup page."""
-    return list_profiles()
+def api_client_setup():
+    """Universal client setup — one prompt for any device, OS, and MCP-capable agent."""
+    return client_setup_payload()
 
 
 @app.get("/api/client-setup/install.sh")
@@ -1286,12 +1371,11 @@ def api_client_setup_install_script():
 
 
 @app.get("/api/client-setup/{profile_id}")
-def api_client_setup_profile(profile_id: str):
-    """Full client profile with copy-paste agent prompt."""
-    try:
-        return profile_payload(profile_id)
-    except KeyError:
+def api_client_setup_legacy(profile_id: str):
+    """Legacy profile URLs — all return the unified client setup payload."""
+    if profile_id not in LEGACY_PROFILE_IDS:
         raise HTTPException(status_code=404, detail=f"Unknown profile: {profile_id}")
+    return client_setup_payload(legacy_profile=profile_id)
 
 
 @app.get("/api/client-bundle.tar.gz")
@@ -1323,9 +1407,9 @@ async def get_onboarding():
         )
         + "/data/ONBOARDING.md",
         "agent_prompt": (
-            f"Connect this workspace to {PRODUCT_NAME}. "
-            f"Open {public}/?tab=setup — pick a client profile and copy the client setup prompt, "
-            f"or fetch: {public}/api/client-setup/cursor-generic"
+            f"Connect this device to {PRODUCT_NAME}. "
+            f"Open {public}/?tab=setup and copy the client setup prompt, "
+            f"or fetch: {public}/api/client-setup"
         ),
         "client_setup_url": f"{public}/api/client-setup",
     }
@@ -1470,141 +1554,28 @@ async def delete_memory(memory_id: int):
     return {"message": "Memory deleted", "project_id": project_id}
 
 
-# Snippet endpoints
-@app.post("/api/snippets")
-async def create_snippet(snippet: SnippetCreate):
-    """Create a new code snippet."""
-    now = datetime.utcnow().isoformat()
-    tags_json = None
-    if snippet.tags:
-        import json
-        tags_json = json.dumps(snippet.tags)
-    
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO snippets (title, language, content, project_id, created_at, updated_at, tags)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (snippet.title, snippet.language, snippet.content, snippet.project_id, now, now, tags_json)
-        )
-        snippet_id = cur.lastrowid
-        conn.commit()
-    
-    return {"id": snippet_id, "message": "Snippet created successfully"}
-
-
-@app.get("/api/snippets")
-async def list_snippets(
-    project_id: Optional[int] = None,
-    language: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
-):
-    """List snippets with optional filtering."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        
-        query = "SELECT * FROM snippets WHERE 1=1"
-        params = []
-        
-        if project_id:
-            query += " AND project_id = ?"
-            params.append(project_id)
-        
-        if language:
-            query += " AND language = ?"
-            params.append(language)
-        
-        query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-        
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        
-        snippets = [dict(row) for row in rows]
-        return {"snippets": snippets, "count": len(snippets)}
-
-
-@app.get("/api/snippets/{snippet_id}")
-async def get_snippet(snippet_id: int):
-    """Get a specific snippet by ID."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM snippets WHERE id = ?", (snippet_id,))
-        row = cur.fetchone()
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-        
-        return dict(row)
-
-
-@app.put("/api/snippets/{snippet_id}")
-async def update_snippet(snippet_id: int, snippet: SnippetUpdate):
-    """Update a snippet."""
-    import json
-    
-    updates = []
-    params = []
-    
-    if snippet.title is not None:
-        updates.append("title = ?")
-        params.append(snippet.title)
-    
-    if snippet.language is not None:
-        updates.append("language = ?")
-        params.append(snippet.language)
-    
-    if snippet.content is not None:
-        updates.append("content = ?")
-        params.append(snippet.content)
-    
-    if snippet.tags is not None:
-        updates.append("tags = ?")
-        params.append(json.dumps(snippet.tags))
-    
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    
-    updates.append("updated_at = ?")
-    params.append(datetime.utcnow().isoformat())
-    params.append(snippet_id)
-    
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            f"UPDATE snippets SET {', '.join(updates)} WHERE id = ?",
-            params
-        )
-        conn.commit()
-        
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-    
-    return {"message": "Snippet updated successfully"}
-
-
-@app.delete("/api/snippets/{snippet_id}")
-async def delete_snippet(snippet_id: int):
-    """Delete a snippet."""
-    with db_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM snippets WHERE id = ?", (snippet_id,))
-        conn.commit()
-        
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Snippet not found")
-    
-    return {"message": "Snippet deleted successfully"}
-
-
 # Health check
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": SERVICE_ID, "product": PRODUCT_NAME}
+    """Health check: API up, Postgres reachable, pgvector present, embeddings state."""
+    from ide_storage.db import vector_available
+    from ide_storage.embeddings import embeddings_status
+
+    db_ok = True
+    db_error = None
+    try:
+        with db_conn() as conn:
+            conn.cursor().execute("SELECT 1")
+    except Exception as exc:  # noqa: BLE001
+        db_ok = False
+        db_error = str(exc)
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "service": SERVICE_ID,
+        "product": PRODUCT_NAME,
+        "database": {"ok": db_ok, "pgvector": vector_available() if db_ok else False, "error": db_error},
+        "embeddings": embeddings_status(),
+    }
 
 
 if __name__ == "__main__":

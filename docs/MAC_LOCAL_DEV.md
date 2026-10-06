@@ -6,16 +6,16 @@ Paste this entire document into a **new Cursor chat** on your Mac with folder **
 
 ## Goal
 
-Run Wolf Leader on your Mac (Docker), develop and test fast, push to GitHub, deploy to corbox only when ready.
+Run Wolf Leader on your Mac (Docker), develop and test fast, push to GitHub, deploy to your production hub only when ready.
 
-Production hub stays at **`http://192.168.1.221:6971`**. Mac dev uses **`http://127.0.0.1:6971`**.
+Production hub stays at **`http://wolf.local:6971`** (or `http://<hub-ip>:6971`). Mac dev uses **`http://127.0.0.1:6971`**.
 
 ---
 
 ## Prerequisites
 
 - Docker Desktop installed and running
-- Git + SSH access to `github.com:CorbinRandall/wolf-leader`
+- Git + SSH access to your fork, e.g. `github.com:<owner>/wolf-leader`
 - Cursor on Mac (this chat)
 
 ---
@@ -24,7 +24,7 @@ Production hub stays at **`http://192.168.1.221:6971`**. Mac dev uses **`http://
 
 ```bash
 mkdir -p ~/dev
-git clone git@github.com:CorbinRandall/wolf-leader.git ~/dev/wolf-leader
+git clone git@github.com:<owner>/wolf-leader.git ~/dev/wolf-leader
 cd ~/dev/wolf-leader
 ```
 
@@ -140,17 +140,31 @@ git add -A && git commit -m "your message" && git push origin main
 
 ---
 
-## Step 6 — Deploy to corbox (production) when ready
+## Step 6 — Deploy to production when ready
 
-From Mac, after `git push`:
+After `git push`, from this repo on your Mac:
 
 ```bash
-ssh root@192.168.1.230 'cd /opt/wolf-leader && git pull && bash scripts/deploy-wolf-leader-lxc.sh'
+WOLF_LEADER_PROXMOX_HOST=root@<proxmox-host> WOLF_LEADER_VMID=<ctid> ./scripts/deploy-prod.sh
 ```
 
-Production URL: http://192.168.1.221:6971/health
+That SSHs to your Proxmox host, pulls from GitHub on the host, then **git pull inside the hub LXC** and rebuilds the container. No manual file copy.
 
-Other clients (Unraid, etc.) keep using **`192.168.1.221`** — no change unless you intentionally point them at your Mac.
+Or on the Proxmox host directly:
+
+```bash
+cd /opt/wolf-leader && git pull --ff-only && WOLF_LEADER_VMID=<ctid> ./scripts/deploy-wolf-leader-lxc.sh
+```
+
+Production URL: http://wolf.local:6971/health
+
+First deploy bootstraps git inside the LXC (preserves `data/` and `.env`). Later deploys are just pull + rebuild.
+
+### Automatic deploy (optional, recommended)
+
+After a one-time [self-hosted runner setup](GITHUB_ACTIONS.md) on Proxmox, **pushes to `main`** run tests and deploy automatically. Until then, use `./scripts/deploy-prod.sh` manually.
+
+Other clients keep using the production hub URL — no change unless you intentionally point them at your Mac.
 
 ---
 
@@ -162,6 +176,6 @@ You are setting up Wolf Leader local dev on macOS.
 2. Confirm `curl http://127.0.0.1:6971/health` and Setup tab loads.
 3. Confirm `verify-cursor-client.sh` passes.
 4. Use MCP `wolf-leader` at `http://127.0.0.1:6972/mcp` for project work in this repo.
-5. Do **not** deploy to corbox unless I ask.
+5. Do **not** deploy to production unless I ask.
 
 Report: Docker status, health URL, verify output, and whether `/save` `/new` appear after reload.

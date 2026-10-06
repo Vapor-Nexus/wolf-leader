@@ -10,11 +10,12 @@ let state = {
   activeChat: null,
   activeProject: null,
   agentContextCache: {},
+  agentBriefCache: null,
+  leftOffCache: null,
   onboardingCache: null,
   searchResults: null,
   searchMode: "keyword",
   clientSetupCache: null,
-  clientProfileId: null,
 };
 
 const $ = (s) => document.querySelector(s);
@@ -33,7 +34,9 @@ function formatDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
   if (Number.isNaN(d.getTime())) return (iso || "").slice(0, 16).replace("T", " ");
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  // HH:MM MM/DD/YYYY in the browser's local time.
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())} ${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()}`;
 }
 
 function escapeHtml(s) {
@@ -284,34 +287,12 @@ async function showHome() {
 async function loadClientSetup() {
   if (!state.clientSetupCache) {
     state.clientSetupCache = await api("/api/client-setup");
-  }
-  const sel = $("#client-profile-select");
-  if (!sel.options.length) {
-    for (const p of state.clientSetupCache.profiles) {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.label;
-      sel.appendChild(opt);
+    const desc = $("#client-setup-desc");
+    if (desc && state.clientSetupCache.description) {
+      desc.textContent = state.clientSetupCache.description;
     }
-    state.clientProfileId =
-      state.clientSetupCache.default_profile || state.clientSetupCache.profiles[0]?.id;
-    sel.value = state.clientProfileId;
   }
-  updateClientProfileUI();
-}
-
-function updateClientProfileUI() {
-  const id = state.clientProfileId || state.clientSetupCache?.default_profile;
-  const meta = state.clientSetupCache?.profiles?.find((p) => p.id === id);
-  if (!meta) return;
-  $("#client-profile-desc").textContent = meta.description || "";
-  $("#client-profile-workspace").textContent = meta.workspace
-    ? `Workspace: ${meta.workspace}`
-    : "";
-}
-
-async function getClientProfilePayload(profileId) {
-  return api(`/api/client-setup/${encodeURIComponent(profileId)}`);
+  return state.clientSetupCache;
 }
 
 async function showSetup() {
@@ -358,14 +339,19 @@ async function selectProject(id) {
   ].filter(Boolean).map((x) => `<span>${escapeHtml(x)}</span>`).join("");
 
   const purposeEl = $("#project-purpose");
+  const overviewPanel = $("#project-overview-panel");
   const purpose = briefData?.purpose_summary || project.description || "";
   if (purpose) {
     purposeEl.textContent = purpose;
     purposeEl.classList.remove("hidden");
+    overviewPanel?.classList.remove("hidden");
   } else {
     purposeEl.textContent = "";
     purposeEl.classList.add("hidden");
+    overviewPanel?.classList.add("hidden");
   }
+
+  await loadLeftOff(id, briefData?.where_we_left_off || null);
 
   if (briefData) {
     $("#brief-meta").textContent = [
@@ -617,6 +603,97 @@ $("#copy-project-context-btn").addEventListener("click", async () => {
   if (ctx?.paste_text) copyText(ctx.paste_text, "Project context");
 });
 
+function friendlySessionTitle(title) {
+  let t = (title || "").trim();
+  if (!t) return "";
+  // First-message titles are often the whole user paste — shorten for the log.
+  if (t.length > 72) t = t.slice(0, 69).replace(/\s+\S*$/, "").trim() + "…";
+  t = t.replace(/^@\S+\s+/, "");
+  return t;
+}
+
+function renderLogEntry(e) {
+  const when = formatDate(e.occurred_at || e.updated_at);
+  const title = friendlySessionTitle(e.title);
+  const body = (e.summary || "").trim() || title || "Session saved.";
+  const metaBits = [when, title].filter(Boolean);
+  return `
+    <button type="button" class="left-off-entry" data-goto-chat="${e.chat_id || ""}">
+      <span class="left-off-entry-meta">${metaBits.map(escapeHtml).join(" · ")}</span>
+      <div class="left-off-entry-body">${escapeHtml(body)}</div>
+    </button>`;
+}
+
+function bindLogEntryClicks(root) {
+  $$(`${root} [data-goto-chat]`).forEach((b) => {
+    if (!b.dataset.gotoChat) return;
+    b.addEventListener("click", () => {
+      switchTab("archive");
+      selectChat(+b.dataset.gotoChat);
+    });
+  });
+}
+
+async function loadLeftOff(projectId, cached) {
+  // Always hit the dedicated endpoint so a stale/partial agent-brief cache
+  // cannot leave the panel stuck on the HTML placeholder.
+  let data = null;
+  try {
+    data = await api(`/api/projects/${projectId}/where-left-off`);
+  } catch (err) {
+    console.warn("logbook fetch failed", err);
+    data = cached || null;
+  }
+  state.leftOffCache = data;
+  const headingEl = $("#left-off-heading");
+  const latestEl = $("#left-off-latest");
+  const logEl = $("#left-off-log");
+  if (!latestEl || !logEl) {
+    console.warn("logbook DOM nodes missing");
+    return;
+  }
+  if (headingEl) headingEl.textContent = data?.heading || "Logbook";
+  if (!data) {
+    latestEl.classList.add("muted");
+    latestEl.textContent = "Could not load logbook.";
+    logEl.innerHTML = "";
+    return;
+  }
+  const entries = data.entries || [];
+  const latest = data.latest || entries[0] || null;
+  // Prefer the dedicated human left-off field; never show raw agent pickup here.
+  const leftOffText = (
+    data.where_left_off ||
+    latest?.summary ||
+    ""
+  ).trim();
+  if (leftOffText) {
+    const when = formatDate(latest?.occurred_at || latest?.updated_at || data.saved_at);
+    latestEl.classList.remove("muted");
+    latestEl.innerHTML = `
+      <div class="left-off-spotlight${latest?.chat_id ? " is-clickable" : ""}" ${latest?.chat_id ? `data-goto-chat="${latest.chat_id}"` : ""}>
+        <span class="left-off-entry-meta">${escapeHtml(when || "Most recent session")}</span>
+        <div class="left-off-entry-body">${escapeHtml(leftOffText)}</div>
+      </div>`;
+    bindLogEntryClicks("#left-off-latest");
+  } else {
+    latestEl.classList.add("muted");
+    latestEl.textContent = "Nothing saved yet — /save after a chat to fill this in.";
+  }
+
+  const rest = entries.length > 1 ? entries.slice(1) : [];
+  if (!entries.length) {
+    logEl.innerHTML = `<p class="muted">Earlier sessions will show up here after more saves.</p>`;
+    return;
+  }
+  if (!rest.length) {
+    logEl.innerHTML = `<p class="muted">Only one session so far.</p>`;
+    return;
+  }
+  logEl.innerHTML = rest.map((e) => renderLogEntry(e)).join("");
+  bindLogEntryClicks("#left-off-log");
+}
+
 $("#copy-agent-start-btn").addEventListener("click", async () => {
   const pid = state.activeProjectId;
   if (!pid) return;
@@ -626,7 +703,11 @@ $("#copy-agent-start-btn").addEventListener("click", async () => {
     brief = await api(`/api/projects/${p?.slug || pid}/agent-brief`);
     state.agentBriefCache = brief;
   }
-  const prompt = brief?.pickup_prompt || brief?.agent_prompt;
+  const prompt =
+    state.leftOffCache?.pickup ||
+    brief?.where_we_left_off?.pickup ||
+    brief?.pickup_prompt ||
+    brief?.agent_prompt;
   if (prompt) copyText(prompt, "Pickup prompt");
 });
 
@@ -675,20 +756,8 @@ $("#refresh-index-btn").addEventListener("click", async () => {
 });
 
 $("#copy-client-setup-prompt-btn").addEventListener("click", async () => {
-  await loadClientSetup();
-  const id = state.clientProfileId || $("#client-profile-select").value;
-  const profile = await getClientProfilePayload(id);
-  await copyText(profile.agent_prompt, `${profile.label} setup prompt`);
-});
-
-$("#client-profile-select").addEventListener("change", (e) => {
-  state.clientProfileId = e.target.value;
-  updateClientProfileUI();
-});
-
-$("#copy-onboarding-prompt-btn").addEventListener("click", async () => {
-  if (!state.onboardingCache) state.onboardingCache = await api("/api/onboarding");
-  await copyText(state.onboardingCache.agent_prompt, "Agent prompt");
+  const setup = await loadClientSetup();
+  await copyText(setup.agent_prompt, "Setup prompt");
 });
 
 $("#copy-onboarding-url-btn").addEventListener("click", async () => {

@@ -41,10 +41,12 @@ Connect this workspace to Wolf Leader and finish setup.
 
 | When | Action |
 |------|--------|
-| **Start** | `resolve_project({ path: "<workspace>" })` → `recall()` or `get_brief()` |
-| **During** | `remember({ type: "decision", content: "..." })` for durable facts |
-| **Checkpoint** | Type **`/save`** — extract memories → refresh brief → archive session |
-| **End** | Stop hook runs the same pipeline |
+| **Start** | `resolve_project({ path: "<workspace>" })` → `recall()`. Not matched → ask the user, then `create_project({ path })` |
+| **During** | `remember({ type, content })` for durable facts; `save_session({ title, content, session_id, project_id, workspace_path })` after each meaningful step and at least every ~8 turns (same `session_id` updates; pass `project_id` so it stays filed) |
+| **End** | Final `save_session` with an honest summary; one line to the user |
+| **Tell the user** | One short line per save; ask before creating/renaming/merging projects; surface any error |
+
+The user never types a command for this. `/save`, `/wolfhowl`, `/wolfeat` exist for deliberate use only.
 
 ## Handoff tiers
 
@@ -56,7 +58,7 @@ Connect this workspace to Wolf Leader and finish setup.
 
 ## MCP tools
 
-`set_project` · `resolve_project` · `recall` · `remember` · `get_brief` · `list_projects` · `search` · `get_session` · `save_session`
+`set_project` · `resolve_project` · `create_project` · `recall` · `remember` · `get_brief` · `list_projects` · `search` · `get_session` · `save_session` · `wolfhowl` · `wolfeat`
 
 ## Without MCP
 
@@ -95,7 +97,7 @@ WOLF_LEADER_MCP=http://YOUR_HOST:6972/mcp \
 ./scripts/install-cursor-client.sh
 ```
 
-Installs `/save` at `~/.cursor/skills/save/`, MCP, hooks, and rules. Reload Cursor after install.
+Installs `/save` at `~/.cursor/skills/save/`, MCP, and rules (hooks only with `WOLF_LEADER_HOOKS=1`). Reload Cursor after install.
 
 ## Phase 3 — Project work
 

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=human-summaries-2" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
@@ -54,18 +54,12 @@
         <header class="view-header">
           <h2>Device &amp; agent setup</h2>
           <div class="chat-actions">
-            <button type="button" id="copy-client-setup-prompt-btn" class="btn btn-primary">Copy client setup prompt</button>
-            <button type="button" id="copy-onboarding-prompt-btn" class="btn btn-secondary">Copy generic prompt</button>
-            <button type="button" id="copy-onboarding-url-btn" class="btn btn-secondary">Copy API URL</button>
+            <button type="button" id="copy-client-setup-prompt-btn" class="btn btn-primary">Copy setup prompt</button>
+            <button type="button" id="copy-onboarding-url-btn" class="btn btn-secondary">Copy onboarding API URL</button>
           </div>
         </header>
-        <div class="setup-client-bar">
-          <label for="client-profile-select" class="setup-client-label">Client profile</label>
-          <select id="client-profile-select" class="setup-client-select"></select>
-          <p id="client-profile-desc" class="setup-client-desc muted"></p>
-          <p id="client-profile-workspace" class="setup-client-meta muted"></p>
-        </div>
-        <p class="setup-lead">Paste the client setup prompt into any agentic IDE (Cursor, Claude Code, etc.). The hub serves the install bundle — no git clone on the client.</p>
+        <p id="client-setup-desc" class="setup-lead muted"></p>
+        <p class="setup-lead">Paste the setup prompt into any agent (Cursor, Claude Code, Gemini, etc.) on any OS. The hub serves the install bundle — no git clone on the client.</p>
         <div id="setup-content" class="md-content"></div>
       </div>
 
@@ -84,7 +78,17 @@
             <button type="button" id="delete-project-btn" class="btn btn-danger">Delete</button>
           </div>
         </header>
-        <p id="project-purpose" class="project-purpose hidden"></p>
+        <section id="project-overview-panel" class="panel project-overview-panel">
+          <h3>Overview</h3>
+          <p id="project-purpose" class="project-purpose hidden"></p>
+        </section>
+        <section id="left-off-panel" class="panel left-off-panel">
+          <h3 id="left-off-heading">Logbook</h3>
+          <h4 class="left-off-section-heading">Where we left off</h4>
+          <div id="left-off-latest" class="left-off-latest muted">Loading…</div>
+          <h4 class="left-off-log-heading">Earlier sessions</h4>
+          <div id="left-off-log" class="left-off-log"><p class="muted">Loading…</p></div>
+        </section>
         <p id="brief-meta" class="setup-lead muted"></p>
         <section class="panel">
           <h3>Agent brief (distilled)</h3>
@@ -151,6 +155,6 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=human-summaries-2"></script>
 </body>
 </html>

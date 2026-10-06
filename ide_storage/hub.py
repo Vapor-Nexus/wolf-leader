@@ -45,6 +45,20 @@ def resolve_project(
         if not path:
             return None
 
+        # Alias table first (any machine's spelling of the same folder), then the
+        # legacy longest-prefix loop over projects.path / compose_path.
+        from .paths import resolve_project_id_by_path
+
+        try:
+            alias_pid = resolve_project_id_by_path(path)
+        except Exception:
+            alias_pid = None
+        if alias_pid is not None:
+            cur.execute("SELECT * FROM projects WHERE id = ?", (alias_pid,))
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+
         norm = normalize_path(path)
         cur.execute(
             """
@@ -65,6 +79,52 @@ def resolve_project(
                         best = project
                         best_len = len(vnorm)
         return best
+
+
+def create_project_for_path(
+    path: str,
+    name: Optional[str] = None,
+    slug: Optional[str] = None,
+    device_name: Optional[str] = None,
+    description: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a project for a workspace folder (idempotent: returns the match if one exists)."""
+    from .paths import register_project_path, to_hub_path
+
+    existing = resolve_project(path=path)
+    if existing:
+        return {**existing, "created": False}
+
+    base = re.split(r"[\\/]+", path.strip().rstrip("\\/"))[-1] or "project"
+    name = (name or base.replace("_", " ").replace("-", " ").strip().title() or "Project")[:120]
+    slug_base = re.sub(r"[^a-z0-9]+", "-", (slug or base).lower()).strip("-")[:60] or "project"
+    now = datetime.utcnow().isoformat()
+    hub_path = to_hub_path(path) or path
+    with db_conn() as conn:
+        cur = conn.cursor()
+        final = slug_base
+        n = 2
+        while True:
+            cur.execute("SELECT 1 FROM projects WHERE slug = ?", (final,))
+            if not cur.fetchone():
+                break
+            final = f"{slug_base}-{n}"
+            n += 1
+        cur.execute(
+            """
+            INSERT INTO projects (name, path, description, slug, status, created_at, updated_at, metadata)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+            """,
+            (
+                name, hub_path, description or f"Created by an agent from {path}", final, now, now,
+                json.dumps({"created_by": "agent", "device_name": device_name}),
+            ),
+        )
+        pid = int(cur.lastrowid)
+        conn.commit()
+    register_project_path(pid, path, kind="workspace", device_name=device_name)
+    project = resolve_project(project_id=pid) or {"id": pid, "slug": final, "name": name}
+    return {**project, "created": True}
 
 
 def resolve_project_key(key: str) -> Optional[Dict[str, Any]]:
@@ -145,7 +205,36 @@ def get_agent_brief_payload(project_id: Optional[int] = None, slug: Optional[str
         pickup_from_spec = m.group(1).replace('\\"', '"')
 
     drill_down = _drill_down_from_spec(handoff, cfg.get("public_base_url", ""))
-    return build_agent_brief_response(
+    public_base = cfg.get("public_base_url", "http://127.0.0.1:6971")
+    brief_url = f"{public_base.rstrip('/')}/api/projects/{pslug}/agent-brief"
+    default_pickup = pickup_from_spec or pickup_prompt(project, public_base=public_base)
+    from .left_off import left_off_payload, log_entry_from_chat, resolve_pickup
+
+    with db_conn() as conn:
+        cur = conn.cursor()
+        log_rows = _activity_log_sessions(cur, pid, 25)
+
+    public = public_base.rstrip("/")
+    entries = []
+    for row in log_rows:
+        entry = log_entry_from_chat(row)
+        entry["web"] = f"{public}/?chat={row['id']}"
+        entries.append(entry)
+
+    pickup_prompt_resolved, _ = resolve_pickup(
+        project, default_pickup=default_pickup, brief_url=brief_url
+    )
+    left_off = left_off_payload(
+        project,
+        brief_url=brief_url,
+        log_entries=entries,
+        default_pickup=default_pickup,
+    )
+    # Prefer resolved pickup that includes latest log when metadata empty
+    if left_off.get("pickup"):
+        pickup_prompt_resolved = left_off["pickup"]
+
+    payload = build_agent_brief_response(
         project,
         chats,
         memories,
@@ -156,12 +245,14 @@ def get_agent_brief_payload(project_id: Optional[int] = None, slug: Optional[str
         spec_yaml=spec_yaml,
         continue_mode=continue_mode,
         deploy_state=handoff.get("observed_deploy_state") or get_deploy_state(project),
-        pickup_prompt=pickup_from_spec
-        or pickup_prompt(project, public_base=cfg.get("public_base_url", "http://127.0.0.1:6971")),
+        pickup_prompt=pickup_prompt_resolved,
         handoff_tier=handoff.get("handoff_tier"),
         drill_down=drill_down,
         preflight=preflight,
     )
+    payload["where_we_left_off"] = left_off
+    payload["activity_log"] = entries
+    return payload
 
 
 def _drill_down_from_spec(handoff: Dict[str, Any], public_base: str) -> Dict[str, Any]:
@@ -204,9 +295,22 @@ def _archived_session_count(cur, project_id: int) -> int:
 def _recent_archived_sessions(cur, project_id: int, limit: int = 2) -> List[Dict[str, Any]]:
     cur.execute(
         """
-        SELECT id, title, updated_at FROM chats
+        SELECT id, title, content, updated_at, created_at, occurred_at FROM chats
         WHERE project_id = ? AND COALESCE(status, 'active') = 'archived'
-        ORDER BY updated_at DESC LIMIT ?
+        ORDER BY COALESCE(occurred_at, created_at, updated_at) DESC LIMIT ?
+        """,
+        (project_id, limit),
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+def _activity_log_sessions(cur, project_id: int, limit: int = 25) -> List[Dict[str, Any]]:
+    """Archived session summaries for the user-facing logbook (session timeline order)."""
+    cur.execute(
+        """
+        SELECT id, title, content, metadata, updated_at, created_at, occurred_at FROM chats
+        WHERE project_id = ? AND COALESCE(status, 'active') = 'archived'
+        ORDER BY COALESCE(occurred_at, created_at, updated_at) DESC LIMIT ?
         """,
         (project_id, limit),
     )
@@ -360,10 +464,22 @@ def save_session(
     project_id: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     device_name: str = "unraid-server",
+    occurred_at: Optional[str] = None,
+    transcript_mtime: Optional[float] = None,
 ) -> Dict[str, Any]:
+    from .session_time import infer_occurred_at, parse_datetime, isoformat_utc
+
     now = datetime.utcnow().isoformat()
     messages = messages or []
+    occurred = infer_occurred_at(
+        explicit=occurred_at,
+        title=title,
+        messages=messages,
+        created_at=now,
+        transcript_mtime=transcript_mtime,
+    )
 
+    explicit_project = project_id is not None
     if project_id is None and workspace_path:
         proj = resolve_project(path=workspace_path)
         if proj:
@@ -373,27 +489,46 @@ def save_session(
         cur = conn.cursor()
         existing_id = None
         if session_id:
-            cur.execute("SELECT id FROM chats WHERE session_id = ?", (session_id,))
+            cur.execute(
+                "SELECT id, project_id, occurred_at, created_at FROM chats WHERE session_id = ?",
+                (session_id,),
+            )
             row = cur.fetchone()
             if row:
                 existing_id = row["id"]
+                # A chat keeps the project it was first filed under; only an
+                # explicit project_id moves it. Re-guessing on every checkpoint
+                # is how chats drifted into look-alike projects.
+                from .import_all_transcripts import CATCH_ALL_PROJECT_ID
+
+                if not explicit_project and row["project_id"] not in (None, CATCH_ALL_PROJECT_ID):
+                    project_id = row["project_id"]
+                # Keep earlier occurred_at if we already know a better session time.
+                existing_occ = (row["occurred_at"] or "").strip()
+                if existing_occ and (not occurred or existing_occ <= occurred):
+                    occurred = existing_occ
 
         if existing_id:
             cur.execute(
                 """
                 UPDATE chats SET title = ?, content = ?, project_id = ?,
-                    workspace_path = ?, updated_at = ? WHERE id = ?
+                    workspace_path = ?, updated_at = ?, occurred_at = COALESCE(?, occurred_at)
+                WHERE id = ?
                 """,
-                (title, content, project_id, workspace_path, now, existing_id),
+                (title, content, project_id, workspace_path, now, occurred, existing_id),
             )
             chat_id = existing_id
             action = "updated"
+            # Re-saving the same session replaces its transcript, so routine
+            # checkpoints from a running chat never duplicate messages.
+            if messages:
+                cur.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
         else:
             cur.execute(
                 """
                 INSERT INTO chats (title, workspace_path, device_name, session_id,
-                    project_id, created_at, updated_at, content, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                    project_id, created_at, updated_at, content, status, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
                 """,
                 (
                     title,
@@ -404,6 +539,7 @@ def save_session(
                     now,
                     now,
                     content,
+                    occurred,
                 ),
             )
             chat_id = cur.lastrowid
@@ -411,18 +547,25 @@ def save_session(
 
         added = 0
         for msg in messages:
+            msg_time = isoformat_utc(parse_datetime(msg.get("created_at") if isinstance(msg, dict) else None)) or occurred or now
             cur.execute(
                 """
                 INSERT INTO messages (chat_id, role, content, created_at, metadata)
                 VALUES (?, ?, ?, ?, NULL)
                 """,
-                (chat_id, msg.get("role", "user"), msg.get("content", ""), now),
+                (chat_id, msg.get("role", "user"), msg.get("content", ""), msg_time),
             )
             added += 1
 
         conn.commit()
 
-    return {"id": chat_id, "action": action, "messages_added": added, "session_id": session_id}
+    return {
+        "id": chat_id,
+        "action": action,
+        "messages_added": added,
+        "session_id": session_id,
+        "occurred_at": occurred,
+    }
 
 
 def save_session_with_pipeline(
@@ -433,9 +576,17 @@ def save_session_with_pipeline(
     project_id: Optional[int] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     device_name: str = "unraid-server",
+    occurred_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     result = save_session(
-        title, content, session_id, workspace_path, project_id, messages, device_name
+        title,
+        content,
+        session_id,
+        workspace_path,
+        project_id,
+        messages,
+        device_name,
+        occurred_at=occurred_at,
     )
     if session_id:
         from .post_save_pipeline import post_save_pipeline
