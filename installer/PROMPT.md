@@ -62,11 +62,14 @@ smb_url=<Mac only: smb://server/share, else NONE>
 letter=<Windows only: single drive letter A-Z without colon, else NONE>
 user=<share username, or NONE>
 password=<ASK or NONE>
-role=<wolf for the drive that holds Wolf Leader projects and vault, else extra>
+role=wolf
 ```
 
-Add `[share2]` … `[share5]` with the same keys for every other network share this machine already
-maps that I use for projects. If this machine maps no network shares, omit all `[shareN]` sections.
+**Which shares to list (strict):** include a share only if a folder named exactly `wolf-leader`
+exists at the top of it (Mac: `<mount point>/wolf-leader`, Windows: `<letter>:\wolf-leader`). That
+share is `[share1]` with `role=wolf`. Do not list any other share, even if it is mounted or looks
+related; I add those myself in the app. Only check for that folder name; do not open, list or read
+anything else on any share. If no share has a `wolf-leader` folder, omit all `[shareN]` sections.
 
 ---
 
@@ -75,4 +78,6 @@ maps that I use for projects. If this machine maps no network shares, omit all `
 - Closed answer sets (`yes|no`, `ASK|NONE`, single letters) leave nothing to interpret.
 - "Answer `no` if you cannot verify" stops agents from optimistic guesses.
 - Passwords stay out of AI chats entirely; the installer asks for them on its own masked page.
+- Shares are listed only by a checkable fact (a top-level `wolf-leader` folder), never by the
+  agent's judgement, so unrelated mounts can't end up mapped.
 - One fenced block and nothing else means the installer can paste-parse without trimming prose.
