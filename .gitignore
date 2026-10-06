@@ -69,3 +69,6 @@ name
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Personal planning notes
+docs/arch-review/
