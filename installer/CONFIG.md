@@ -43,6 +43,21 @@ path=C:\Users\me\WolfLeader-backup-20261006-1240
 ; digits only
 files=23
 
+[original]
+; optional section (the Mac app reads it; Windows ignores it for now)
+; yes only if <hub_url>/health answers without a "database" key (the original SQLite hub)
+found=yes
+; this = hub runs on this machine | ssh = tested key login to the hub computer | manual = neither | NONE when found=no
+where=ssh
+; original Wolf Leader folder on the hub computer (compose working_dir of container wolf-leader), or NONE
+folder=/opt/wolf-leader
+; user@host for SSH, or NONE
+ssh_target=root@wolf.local
+; digits, or NONE
+ssh_port=22
+; path of the private key FILE on this machine (never its contents), or NONE
+ssh_key=~/.ssh/id_ed25519
+
 [share1]
 ; up to five sections: share1..share5. Omit all of them if no network share is used.
 ; windows form, e.g. \\server\share   (required when os=windows)
@@ -95,5 +110,6 @@ works but is experimental." `connect` is the recommended choice when a hub alrea
 - **obsidian** — Windows: `winget install Obsidian.Obsidian`. Mac: `brew install --cask obsidian` or download page. Point the user at `<wolf share>\wolf-leader\vault`.
 - **mode=new** — requires Docker. Write `.env` from `.env.example` (`IDE_STORAGE_PUBLIC_URL`, `IDE_STORAGE_MCP_URL`, `WOLF_TZ`, `WOLF_WIKI_ENABLED=1|0`, `WOLF_SHARE_ROOT`, and a random `POSTGRES_PASSWORD` when `.env` is new), then `docker compose -f docker-compose.postgres.yml up -d --build`, wait for `/health`. Desktop data paths: Windows `WOLF_SHARE_ROOT=%LOCALAPPDATA%\WolfLeader\share` with Postgres inside Docker Desktop's VM (resetting Docker Desktop deletes it); Mac `WOLF_SHARE_ROOT=~/WolfLeader/share`, `WOLF_PGDATA=~/WolfLeader/pgdata`. `WOLF_WIKI_ENABLED=0` hides the wiki; the image still builds it.
 - **mode=update** — refresh client files; if a hub `.env` already exists in the install folder, also re-run `docker compose up -d --build`.
+- **`[original]` found=yes** (Mac app) — before installing, an extra "Upgrade old hub" step offers `scripts/wolf-og-migrate.sh --upgrade --yes --old <folder> --url <hub_url>`, run locally (`where=this`) or on the hub computer (`where=ssh`, adds `--ssh <ssh_target> --ssh-port <ssh_port> --ssh-key <ssh_key>`; key login only). `where=manual` shows the command to run on the hub instead. After an upgrade, Settings > Hub offers Downgrade (`--revert --yes --bring yes`).
 - Always: `git config --global user.name/user.email` from the identity page and `safe.directory '*'`; verify `GET <hub_url>/health`. A new hub on `localhost` tells the user the `http://<device>.local:6971` address other machines should use.
 - The answer file must be plain ASCII (Windows reads it with `GetIniString`).

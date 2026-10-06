@@ -37,6 +37,49 @@ struct ShareConfig: Codable, Identifiable, Hashable {
     var mountPoint: String { "/Volumes/" + (shareName.split(separator: "/").first.map(String.init) ?? shareName) }
 }
 
+/// An original (SQLite) Wolf Leader hub the setup prompt found, from the `[original]` section.
+/// Kept after an upgrade so Settings can downgrade back to it.
+struct OriginalHub: Codable, Equatable {
+    /// this | ssh | manual
+    var location: String
+    /// The original Wolf Leader folder on the hub computer.
+    var folder: String
+    /// user@host, empty unless location == "ssh".
+    var sshTarget: String
+    var sshPort: String
+    /// Path of the private key file on this Mac; empty means ssh's defaults.
+    var sshKey: String
+    var upgraded = false
+
+    var canRun: Bool { (location == "this" || location == "ssh") && !folder.isEmpty }
+    var runsWhere: String { location == "ssh" ? "\(sshTarget) (over SSH)" : "this Mac" }
+
+    /// Arguments for scripts/wolf-og-migrate.sh; action is "upgrade" or "revert".
+    func args(_ action: String, hubURL: String) -> [String] {
+        var a = ["--\(action)", "--yes", "--old", folder]
+        a += action == "upgrade" ? ["--url", hubURL] : ["--bring", "yes"]
+        if location == "ssh" {
+            a += ["--ssh", sshTarget, "--ssh-port", sshPort.isEmpty ? "22" : sshPort]
+            if !sshKey.isEmpty { a += ["--ssh-key", sshKey] }
+        }
+        return a
+    }
+
+    static var script: URL? {
+        guard let url = Payload.root?.appendingPathComponent("scripts/wolf-og-migrate.sh"),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    /// What to paste on the hub computer when the app can't log in to it.
+    static func manualCommand(repoURL: String, branch: String, action: String) -> String {
+        let repo = repoURL.replacingOccurrences(of: "https://github.com/", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let raw = "https://raw.githubusercontent.com/\(repo)/\(branch)/scripts/wolf-og-migrate.sh"
+        return "curl -fsSL \(raw) -o wolf-og-migrate.sh && bash wolf-og-migrate.sh --\(action)"
+    }
+}
+
 struct WolfConfig: Codable {
     var setupComplete = false
     var setupPath: SetupPath?
@@ -49,6 +92,8 @@ struct WolfConfig: Codable {
     /// Where update checks look. Defaults come from the build (Info.plist).
     var repoURL: String = BuildInfo.repoURL
     var branch: String = BuildInfo.branch
+    /// Set when setup found an original hub; `upgraded` once the upgrade ran.
+    var original: OriginalHub?
 
     var wolfShare: ShareConfig? { shares.first { $0.role == "wolf" } ?? shares.first }
     /// Obsidian vault on the wolf share, if that share is mounted.

@@ -1,7 +1,7 @@
 import Foundation
 
 enum SetupStep: String, Identifiable {
-    case welcome, path, server, toggles, askAI, passwords, git, review, install
+    case welcome, path, server, toggles, askAI, upgrade, passwords, git, review, install
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum SetupStep: String, Identifiable {
         case .server: return "Set up your server"
         case .toggles: return "What to install"
         case .askAI: return "Ask your AI"
+        case .upgrade: return "Upgrade old hub"
         case .passwords: return "Passwords"
         case .git: return "Git name"
         case .review: return "Review"
@@ -162,8 +163,37 @@ final class OnboardingModel: ObservableObject {
     var steps: [SetupStep] {
         var s: [SetupStep] = [.welcome, .path]
         if path == .newOnServer { s.append(.server) }
-        s += [.toggles, .askAI, .passwords, .git, .review, .install]
+        s += [.toggles, .askAI]
+        if original != nil { s.append(.upgrade) }
+        s += [.passwords, .git, .review, .install]
         return s
+    }
+
+    /// The original (SQLite) hub the AI reported in `[original]`, if any.
+    var original: OriginalHub? {
+        guard value("original", "found") == "yes" else { return nil }
+        func v(_ k: String) -> String {
+            let s = value("original", k)
+            return s == "NONE" ? "" : s
+        }
+        return OriginalHub(location: v("where"), folder: v("folder"), sshTarget: v("ssh_target"),
+                           sshPort: v("ssh_port"), sshKey: v("ssh_key"))
+    }
+
+    @Published private(set) var upgradeSucceeded: Bool?
+
+    /// Script and arguments for the Upgrade step, or nil when it can't run from this Mac.
+    func upgradeJob() -> (script: URL, args: [String])? {
+        guard let hub = original, hub.canRun, let script = OriginalHub.script else { return nil }
+        return (script, hub.args("upgrade", hubURL: value("wolf", "hub_url")))
+    }
+
+    func finishUpgrade(code: Int32) {
+        upgradeSucceeded = code == 0
+        guard code == 0, let store, var hub = original else { return }
+        hub.upgraded = true
+        store.config.original = hub
+        store.save()
     }
 
     var askShares: [SetupShare] { shares.filter { $0.askPassword && !$0.isGuest } }
@@ -187,7 +217,7 @@ final class OnboardingModel: ObservableObject {
 
     var canAdvance: Bool {
         switch step {
-        case .welcome, .server, .toggles, .passwords, .review: return true
+        case .welcome, .server, .toggles, .upgrade, .passwords, .review: return true
         case .path: return path != nil
         case .askAI: return isIniValid
         case .git: return gitValid

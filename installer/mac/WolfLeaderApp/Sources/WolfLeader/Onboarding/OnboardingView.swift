@@ -8,10 +8,11 @@ struct OnboardingView: View {
     @StateObject private var model = OnboardingModel()
     @StateObject private var runner = InstallRunner()
     @StateObject private var undoRunner = InstallRunner()
+    @StateObject private var upgradeRunner = InstallRunner()
 
     var body: some View {
         HStack(spacing: 0) {
-            SetupStepRail(model: model, locked: runner.running || undoRunner.running)
+            SetupStepRail(model: model, locked: runner.running || undoRunner.running || upgradeRunner.running)
                 .frame(width: 236)
                 .background(p.sidebar)
             Rectangle().fill(p.border).frame(width: 1)
@@ -37,6 +38,10 @@ struct OnboardingView: View {
             guard let code else { return }
             model.finishInstall(code: code, store: store)
         }
+        .onChange(of: upgradeRunner.exitCode) { _, code in
+            guard let code else { return }
+            model.finishUpgrade(code: code)
+        }
     }
 
     @ViewBuilder
@@ -47,6 +52,7 @@ struct OnboardingView: View {
         case .server: SetupServerStep(model: model)
         case .toggles: SetupTogglesStep(model: model)
         case .askAI: SetupAskAIStep(model: model)
+        case .upgrade: SetupUpgradeStep(model: model, runner: upgradeRunner, start: startUpgrade)
         case .passwords: SetupPasswordsStep(model: model)
         case .git: SetupGitStep(model: model)
         case .review: SetupReviewStep(model: model)
@@ -74,7 +80,7 @@ struct OnboardingView: View {
                     .foregroundStyle(p.textMuted)
             }
             Spacer()
-            if model.canGoBack {
+            if model.canGoBack && !upgradeRunner.running {
                 Button("Back") { model.back() }
                     .buttonStyle(SecondaryButtonStyle())
                     .keyboardShortcut(.cancelAction)
@@ -93,6 +99,7 @@ struct OnboardingView: View {
     }
 
     private var nextEnabled: Bool {
+        if upgradeRunner.running { return false }
         if model.step == .review { return model.installScript != nil && model.canAdvance }
         return model.canAdvance
     }
@@ -111,6 +118,11 @@ struct OnboardingView: View {
         guard !runner.running, !undoRunner.running else { return }
         guard let job = model.prepareInstall() else { return }
         runner.run(script: job.script, args: job.args, env: job.env)
+    }
+
+    private func startUpgrade() {
+        guard !upgradeRunner.running, !runner.running, let job = model.upgradeJob() else { return }
+        upgradeRunner.run(script: job.script, args: job.args, env: [:])
     }
 
     private func startUndo(_ script: URL) {

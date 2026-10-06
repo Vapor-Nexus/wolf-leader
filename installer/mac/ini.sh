@@ -34,6 +34,7 @@ function known(s, k) {
   if (s == "wolf") return (k ~ /^(format|os|hub_url|mcp_url|timezone|device_name)$/)
   if (s == "detected") return (k ~ /^(git|python|python_version|docker|obsidian|cursor|claude_code|wolf_client)$/)
   if (s == "backup") return (k ~ /^(done|path|files)$/)
+  if (s == "original") return (k ~ /^(found|where|folder|ssh_target|ssh_port|ssh_key)$/)
   return (k ~ /^(unc|smb_url|letter|user|password|role)$/)
 }
 function tzknown(v,   f, r, junk) {
@@ -67,6 +68,21 @@ function check(s, k, v,   hp, i, j) {
       if (v != "NONE" && v !~ /^\// && v !~ /^~\// && v !~ /^[A-Za-z]:\\/ && v !~ /^\\\\/) bad("path must be an absolute folder path (like /Users/you/WolfLeader-backup-20261006-1240), or NONE")
     }
     else if (k == "files") { if (v !~ /^[0-9]+$/) bad("files must be digits only") }
+  } else if (s == "original") {
+    if (k == "found") { if (v != "yes" && v != "no") bad("found must be yes or no (lowercase)") }
+    else if (k == "where") { if (v !~ /^(this|ssh|manual|NONE)$/) bad("where must be this, ssh, manual or NONE") }
+    else if (k == "folder") {
+      if (v != "NONE" && v !~ /^\// && v !~ /^~\//) bad("folder must be an absolute path on the hub computer (like /opt/wolf-leader), or NONE")
+    }
+    else if (k == "ssh_target") {
+      if (v != "NONE" && v !~ /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$/) bad("ssh_target must look like user@host, or NONE")
+    }
+    else if (k == "ssh_port") {
+      if (v != "NONE" && (v !~ /^[0-9]+$/ || v + 0 < 1 || v + 0 > 65535)) bad("ssh_port must be a port number 1-65535, or NONE")
+    }
+    else if (k == "ssh_key") {
+      if (v != "NONE" && v !~ /^\// && v !~ /^~\//) bad("ssh_key must be the path of a key file (like ~/.ssh/id_ed25519), or NONE - never the key itself")
+    }
   } else {
     if (k == "smb_url") {
       if (v != "NONE") {
@@ -94,12 +110,12 @@ BEGIN { sec = ""; nerr = 0 }
   if (c == "[") {
     if (substr(line, length(line), 1) != "]") { bad("broken section header"); sec = "?"; next }
     name = trim(substr(line, 2, length(line) - 2))
-    if (name == "wolf" || name == "detected" || name == "backup" || name ~ /^share[1-5]$/) {
+    if (name == "wolf" || name == "detected" || name == "backup" || name == "original" || name ~ /^share[1-5]$/) {
       if (name in seen) { bad("section [" name "] appears twice"); sec = "?"; next }
       seen[name] = 1; sec = name
     }
     else if (name ~ /^share[0-9]+$/) { bad("only [share1] to [share5] are allowed"); sec = "?" }
-    else { bad("unknown section [" name "] (allowed: [wolf], [detected], [backup], [share1]..[share5])"); sec = "?" }
+    else { bad("unknown section [" name "] (allowed: [wolf], [detected], [backup], [original], [share1]..[share5])"); sec = "?" }
     next
   }
   eq = index(line, "=")
@@ -129,6 +145,18 @@ END {
   if ((("backup", "done") in val_of) && (("backup", "path") in val_of) && val_of["backup", "done"] == "yes" && val_of["backup", "path"] == "NONE")
     badk("backup", "path", "done=yes needs the backup folder path (or write done=no)")
 
+  no = split("found where folder ssh_target ssh_port ssh_key", ok, " ")
+  if ("original" in seen) {
+    for (i = 1; i <= no; i++) if (!(("original", ok[i]) in val_of)) missing("original", ok[i])
+    of = val_of["original", "found"]; ow = val_of["original", "where"]
+    if (of == "no" && ow != "" && ow != "NONE") badk("original", "where", "found=no needs where=NONE")
+    if (of == "yes" && ow == "NONE") badk("original", "where", "found=yes needs where=this, ssh or manual")
+    if ((ow == "this" || ow == "ssh") && val_of["original", "folder"] == "NONE")
+      badk("original", "folder", "where=" ow " needs the original folder path")
+    if (ow == "ssh" && val_of["original", "ssh_target"] == "NONE") badk("original", "ssh_target", "where=ssh needs ssh_target=user@host")
+    if (ow == "ssh" && val_of["original", "ssh_port"] == "NONE") badk("original", "ssh_port", "where=ssh needs ssh_port (22 if unsure)")
+  }
+
   os = ""
   if (("wolf", "os") in val_of) os = val_of["wolf", "os"]
   if (os != "" && expect_os != "" && os != expect_os && (os == "mac" || os == "windows"))
@@ -157,6 +185,7 @@ END {
   for (i = 1; i <= nw; i++) print "wolf." wk[i] "=" val_of["wolf", wk[i]]
   for (i = 1; i <= nd; i++) print "detected." dk[i] "=" val_of["detected", dk[i]]
   for (i = 1; i <= nb; i++) print "backup." bk[i] "=" val_of["backup", bk[i]]
+  if ("original" in seen) for (i = 1; i <= no; i++) print "original." ok[i] "=" val_of["original", ok[i]]
   for (n = 1; n <= 5; n++) {
     s = "share" n
     if (!(s in seen)) continue

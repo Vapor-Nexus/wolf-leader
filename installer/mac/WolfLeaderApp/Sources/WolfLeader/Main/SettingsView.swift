@@ -31,6 +31,7 @@ struct SettingsView: View {
                 SettingsSetupGroup()
             case .hub:
                 SettingsHubGroup()
+                SettingsOriginalGroup()
             case .updates:
                 SettingsUpdatesGroup(runner: updates.runner)
             case .about:
@@ -321,6 +322,69 @@ private struct SettingsHubGroup: View {
         guard let answer = try? await URLSession.shared.bytes(for: req) else { return false }
         answer.0.task.cancel()
         return answer.1 is HTTPURLResponse
+    }
+}
+
+// MARK: - Hub: downgrade to the original Wolf Leader
+
+private struct SettingsOriginalGroup: View {
+    @EnvironmentObject private var store: ConfigStore
+    @Environment(\.palette) private var p
+    @StateObject private var runner = InstallRunner()
+    @State private var confirm = false
+
+    var body: some View {
+        if let hub = store.config.original, hub.upgraded || runner.exitCode != nil {
+            WLGroup(title: "Original Wolf Leader", subtitle: "This hub was upgraded from the original Wolf Leader. You can go back to it.", icon: "clock.arrow.circlepath") {
+                WLRow(
+                    title: "Downgrade",
+                    detail: hub.canRun
+                        ? "Stops the new hub on \(hub.runsWhere), copies everything saved since the upgrade back into the original (its old file is backed up first) and starts the original again."
+                        : "Run this on the hub computer:"
+                ) {
+                    if hub.canRun {
+                        Button {
+                            confirm = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                if runner.running { ProgressView().controlSize(.small) }
+                                Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .semibold))
+                                Text("Downgrade")
+                            }
+                        }
+                        .buttonStyle(OutlineButtonStyle(tint: p.warn))
+                        .disabled(runner.running || !hub.upgraded || OriginalHub.script == nil)
+                    }
+                }
+                if !hub.canRun {
+                    SetupCommandRow(command: OriginalHub.manualCommand(
+                        repoURL: store.config.repoURL, branch: store.config.branch, action: "revert"))
+                }
+                if let code = runner.exitCode {
+                    WLStatusPill(text: code == 0 ? "Back on the original Wolf Leader." : "The downgrade stopped (code \(code)); see below.",
+                                 kind: code == 0 ? .good : .bad)
+                }
+                if !runner.lines.isEmpty {
+                    SettingsLogBox(lines: runner.lines)
+                }
+            }
+            .confirmationDialog("Go back to the original Wolf Leader?", isPresented: $confirm) {
+                Button("Downgrade", role: .destructive) { start(hub) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The new hub's database is kept, so you can upgrade again later. Features the original lacks, like /wolfhowl and /wolfeat, stop working.")
+            }
+            .onChange(of: runner.exitCode) { _, code in
+                guard code == 0 else { return }
+                store.config.original?.upgraded = false
+                store.save()
+            }
+        }
+    }
+
+    private func start(_ hub: OriginalHub) {
+        guard let script = OriginalHub.script else { return }
+        runner.run(script: script, args: hub.args("revert", hubURL: store.config.hubURL), env: [:])
     }
 }
 

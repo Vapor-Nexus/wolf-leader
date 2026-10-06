@@ -56,6 +56,14 @@ done=<yes|no>
 path=<absolute path of the backup folder you created, or NONE>
 files=<number of files you copied, digits only>
 
+[original]
+found=<yes|no>
+where=<this|ssh|manual|NONE>
+folder=<absolute path of the original Wolf Leader folder on the hub computer, or NONE>
+ssh_target=<user@host of the hub computer, or NONE>
+ssh_port=<digits, or NONE>
+ssh_key=<absolute path of the SSH private key FILE on this computer, or NONE>
+
 [share1]
 unc=<Windows only: \\server\share, else NONE>
 smb_url=<Mac only: smb://server/share, else NONE>
@@ -64,6 +72,25 @@ user=<share username, or NONE>
 password=<ASK or NONE>
 role=wolf
 ```
+
+**Original Wolf Leader check (strict):** run `curl -s <hub_url>/health`. Write `found=yes` only if
+it answers JSON that has a `status` key and no `database` key (that is the original, older hub).
+Otherwise write `found=no` and `NONE` for every other `[original]` key. When `found=yes`:
+
+- If `docker inspect wolf-leader` works on **this** computer, the hub runs here: `where=this`,
+  `folder=` the output of
+  `docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' wolf-leader`,
+  and `ssh_target`, `ssh_port`, `ssh_key` are `NONE`.
+- Otherwise find an SSH login for the hub's host: a `Host` block in `~/.ssh/config` whose `Host` or
+  `HostName` is the hub's host, else the default keys in `~/.ssh/`. Test it with
+  `ssh -o BatchMode=yes -o ConnectTimeout=5 -p <port> -i <key> <user>@<host> docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' wolf-leader`.
+  If that prints a folder: `where=ssh`, `folder=` that output, `ssh_target=<user>@<host>`,
+  `ssh_port=` the port (22 if none is set), `ssh_key=` the key file's path (or `NONE` if the test
+  worked without `-i`).
+- If no login works without a password: `where=manual` and `NONE` for `folder` and the `ssh_` keys.
+
+Never write the contents of a key, never type a password, never create keys, and never change
+anything on the hub computer. Reading `~/.ssh/config` and running the one test command is all.
 
 **Which shares to list (strict):** include a share only if a folder named exactly `wolf-leader`
 exists at the top of it (Mac: `<mount point>/wolf-leader`, Windows: `<letter>:\wolf-leader`). That
@@ -78,6 +105,9 @@ anything else on any share. If no share has a `wolf-leader` folder, omit all `[s
 - Closed answer sets (`yes|no`, `ASK|NONE`, single letters) leave nothing to interpret.
 - "Answer `no` if you cannot verify" stops agents from optimistic guesses.
 - Passwords stay out of AI chats entirely; the installer asks for them on its own masked page.
+- The original-hub check is a fact too (`/health` without a `database` key). SSH is reported as
+  a key *path* plus a tested login, so the app can run the upgrade on the hub computer without a
+  key or password ever entering the chat.
 - Shares are listed only by a checkable fact (a top-level `wolf-leader` folder), never by the
   agent's judgement, so unrelated mounts can't end up mapped.
 - One fenced block and nothing else means the installer can paste-parse without trimming prose.

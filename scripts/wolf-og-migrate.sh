@@ -10,18 +10,65 @@
 # Revert:  stops the new hub (its database is kept), optionally copies everything saved since
 #          the upgrade back into the original database (old file backed up first), and starts
 #          the original container again.
+#
+# Without prompts (the Wolf Leader app runs it this way):
+#   wolf-og-migrate.sh --upgrade --yes [--old DIR] [--url URL] [--share DIR] [--replace]
+#   wolf-og-migrate.sh --revert  --yes [--old DIR] [--new DIR] [--bring yes|no]
+# Add --ssh USER@HOST [--ssh-port N] [--ssh-key PATH] to run it on the hub computer from here:
+# the script copies itself there over SSH (key login only, never a password) and runs there.
 set -euo pipefail
+export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 
 REPO="https://github.com/Vapor-Nexus/wolf-leader"
 BRANCH="${WOLF_BRANCH:-feat/background-memory-installer}"
+
+ACTION="" YES=0 A_OLD="" A_NEW="" A_URL="" A_SHARE="" A_BRING="" A_REPLACE=0
+SSH_TARGET="" SSH_PORT="" SSH_KEY=""
+PASS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --upgrade) ACTION=upgrade; PASS+=("$1"); shift ;;
+    --revert) ACTION=revert; PASS+=("$1"); shift ;;
+    --yes) YES=1; PASS+=("$1"); shift ;;
+    --replace) A_REPLACE=1; PASS+=("$1"); shift ;;
+    --old) A_OLD="$2"; PASS+=("$1" "$2"); shift 2 ;;
+    --new) A_NEW="$2"; PASS+=("$1" "$2"); shift 2 ;;
+    --url) A_URL="$2"; PASS+=("$1" "$2"); shift 2 ;;
+    --share) A_SHARE="$2"; PASS+=("$1" "$2"); shift 2 ;;
+    --bring) A_BRING="$2"; PASS+=("$1" "$2"); shift 2 ;;
+    --ssh) SSH_TARGET="$2"; shift 2 ;;
+    --ssh-port) SSH_PORT="$2"; shift 2 ;;
+    --ssh-key) SSH_KEY="${2/#\~/$HOME}"; shift 2 ;;
+    *) printf 'ERROR: unknown option %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+if [ -n "$SSH_TARGET" ]; then
+  SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+  [ -n "$SSH_PORT" ] && SSH+=(-p "$SSH_PORT")
+  [ -n "$SSH_KEY" ] && SSH+=(-i "$SSH_KEY")
+  printf '==> Connecting to %s over SSH\n' "$SSH_TARGET"
+  "${SSH[@]}" "$SSH_TARGET" 'cat > /tmp/wolf-og-migrate.sh && chmod 700 /tmp/wolf-og-migrate.sh' < "$0" \
+    || { printf 'ERROR: could not log in to %s with an SSH key (no passwords are used)\n' "$SSH_TARGET" >&2; exit 4; }
+  REMOTE="bash /tmp/wolf-og-migrate.sh"
+  for a in ${PASS[@]+"${PASS[@]}"}; do REMOTE+=" $(printf '%q' "$a")"; done
+  exec "${SSH[@]}" "$SSH_TARGET" "$REMOTE"
+fi
+
 PY="$(mktemp -t wolf-og-migrate.XXXXXX)"
 trap 'rm -f "$PY"' EXIT
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 step() { STEP=$((STEP + 1)); printf '\n==> [%s/%s] %s\n' "$STEP" "$TOTAL" "$*"; }
-ask() { local a; read -r -p "$1 [${2}]: " a </dev/tty; printf '%s' "${a:-$2}"; }
-yes_no() { local a; read -r -p "$1 [${2}]: " a </dev/tty; a="${a:-$2}"; [[ "$a" =~ ^[Yy] ]]; }
+ask() {
+  if [ "$YES" = 1 ]; then printf '%s' "$2"; return; fi
+  local a; read -r -p "$1 [${2}]: " a </dev/tty; printf '%s' "${a:-$2}"
+}
+yes_no() {
+  if [ "$YES" = 1 ]; then [[ "$2" =~ ^[Yy] ]]; return; fi
+  local a; read -r -p "$1 [${2}]: " a </dev/tty; a="${a:-$2}"; [[ "$a" =~ ^[Yy] ]]
+}
 
 env_get() { [ -f "$1" ] && grep -E "^$2=" "$1" | tail -n 1 | cut -d= -f2- || true; }
 env_set() {
@@ -161,7 +208,7 @@ upgrade() {
   fi
   say ""
   say "Where is your original Wolf Leader? (the folder with docker-compose.yml and data/ide-work.db)"
-  OLD="$(ask "Original folder" "${guess:-$HOME/wolf-leader}")"
+  OLD="${A_OLD:-$(ask "Original folder" "${guess:-$HOME/wolf-leader}")}"
   OLD="$(cd "$OLD" 2>/dev/null && pwd)" || die "folder not found"
   [ -f "$OLD/data/ide-work.db" ] || die "no data/ide-work.db in $OLD"
   NEW="${OLD%/}-v2"
@@ -171,7 +218,7 @@ upgrade() {
   URL="$(env_get "$OLD/.env" IDE_STORAGE_PUBLIC_URL)"
   say ""
   say "The address other computers use to reach this hub (keep it the same as before)."
-  URL="$(ask "Hub address" "${URL:-http://$(hostname):$PORT}")"; URL="${URL%/}"
+  URL="${A_URL:-$(ask "Hub address" "${URL:-http://$(hostname):$PORT}")}"; URL="${URL%/}"
   MCP_URL="$(env_get "$OLD/.env" IDE_STORAGE_MCP_URL)"
   if [ -z "$MCP_URL" ]; then
     BASE="$URL"; [[ "$BASE" =~ :[0-9]+$ ]] && BASE="${BASE%:*}"
@@ -182,7 +229,7 @@ upgrade() {
   say ""
   say "The share folder: the new version keeps its Obsidian vault and backups in"
   say "<share>/wolf-leader/. Share this folder over SMB so other computers can map it."
-  SHARE="$(ask "Share folder" "$SHARE")"
+  SHARE="${A_SHARE:-$(ask "Share folder" "$SHARE")}"
 
   say ""
   say "Plan:"
@@ -244,7 +291,9 @@ upgrade() {
 
   step "Copying the original data"
   cp -p "$OLD/data/ide-work.db" "$NEW/data/og/"
-  for f in "$OLD/data/ide-work.db-wal" "$OLD/data/ide-work.db-shm"; do [ -f "$f" ] && cp -p "$f" "$NEW/data/og/"; done
+  for f in "$OLD/data/ide-work.db-wal" "$OLD/data/ide-work.db-shm"; do
+    if [ -f "$f" ]; then cp -p "$f" "$NEW/data/og/"; fi
+  done
   if [ -d "$OLD/data/projects" ]; then
     mkdir -p "$NEW/data/projects"
     cp -Rp "$OLD/data/projects/." "$NEW/data/projects/"
@@ -258,7 +307,8 @@ upgrade() {
   local rc=0
   run_py import /data/og/ide-work.db || rc=$?
   if [ "$rc" = 3 ]; then
-    yes_no "Replace the new hub's data with the original's? (wipes what the new hub has)" "n" || die "import skipped"
+    [ "$A_REPLACE" = 1 ] || yes_no "Replace the new hub's data with the original's? (wipes what the new hub has)" "n" \
+      || die "the new hub already has data; import skipped (pass --replace to overwrite it)"
     run_py import /data/og/ide-work.db -e REPLACE=1
   elif [ "$rc" != 0 ]; then
     die "import failed (output above); the original is untouched, run Revert to go back"
@@ -278,21 +328,25 @@ upgrade() {
 revert() {
   local NEW OLD PORT BRING=1 STAMP
   exists wolf-leader-og || die "no wolf-leader-og container found; there is nothing to revert to"
-  OLD="$(label_dir wolf-leader-og)"
-  NEW="${OLD%/}-v2"
   say ""
-  OLD="$(ask "Original folder" "$OLD")"; OLD="$(cd "$OLD" && pwd)"
-  NEW="$(ask "New hub folder" "${OLD%/}-v2")"; NEW="$(cd "$NEW" && pwd)"
+  OLD="${A_OLD:-$(ask "Original folder" "$(label_dir wolf-leader-og)")}"
+  OLD="$(cd "$OLD" 2>/dev/null && pwd)" || die "original folder not found"
+  NEW="${A_NEW:-$(ask "New hub folder" "${OLD%/}-v2")}"
+  NEW="$(cd "$NEW" 2>/dev/null && pwd)" || die "new hub folder not found"
   [ -f "$OLD/data/ide-work.db" ] || die "no data/ide-work.db in $OLD"
   PORT="$(env_get "$NEW/.env" PORT)"; PORT="${PORT:-6971}"
 
   say ""
   say "Anything saved since the upgrade lives only in the new hub."
-  yes_no "Copy it back into the original database? (the current file is backed up first)" "y" || BRING=0
+  case "$A_BRING" in
+    yes) BRING=1 ;;
+    no) BRING=0 ;;
+    *) yes_no "Copy it back into the original database? (the current file is backed up first)" "y" || BRING=0 ;;
+  esac
   say ""
   say "Plan:"
   say "  stop the new hub in $NEW (its database stays in $NEW/pgdata)"
-  [ "$BRING" = 1 ] && say "  copy projects, chats and memories back into $OLD/data/ide-work.db"
+  if [ "$BRING" = 1 ]; then say "  copy projects, chats and memories back into $OLD/data/ide-work.db"; fi
   say "  start the original container again (wolf-leader-og -> wolf-leader)"
   yes_no "Go ahead?" "y" || die "cancelled"
 
@@ -306,7 +360,7 @@ revert() {
     mkdir -p "$NEW/data/og-revert"
     rm -f "$NEW/data/og-revert/"ide-work.db*
     for f in ide-work.db ide-work.db-wal ide-work.db-shm; do
-      [ -f "$OLD/data/$f" ] && cp -p "$OLD/data/$f" "$NEW/data/og-revert/"
+      if [ -f "$OLD/data/$f" ]; then cp -p "$OLD/data/$f" "$NEW/data/og-revert/"; fi
     done
     run_py export /data/og-revert/ide-work.db
   fi
@@ -318,7 +372,7 @@ revert() {
     step "Putting the updated database in place"
     mkdir -p "$OLD/data/backup-$STAMP"
     for f in ide-work.db ide-work.db-wal ide-work.db-shm; do
-      [ -f "$OLD/data/$f" ] && mv "$OLD/data/$f" "$OLD/data/backup-$STAMP/"
+      if [ -f "$OLD/data/$f" ]; then mv "$OLD/data/$f" "$OLD/data/backup-$STAMP/"; fi
     done
     cp -p "$NEW/data/og-revert/ide-work.db" "$OLD/data/ide-work.db"
     say "    previous file kept in $OLD/data/backup-$STAMP/"
@@ -336,11 +390,15 @@ revert() {
   say "To upgrade again later, run this script and pick Upgrade."
 }
 
-say "Wolf Leader: original <-> new hub"
-say "  1) Upgrade the original Wolf Leader on this computer to the new version"
-say "  2) Revert to the original Wolf Leader"
-case "$(ask "Choose" "1")" in
-  1) upgrade ;;
-  2) revert ;;
-  *) die "pick 1 or 2" ;;
-esac
+if [ -z "$ACTION" ]; then
+  [ "$YES" = 0 ] || die "--yes needs --upgrade or --revert"
+  say "Wolf Leader: original <-> new hub"
+  say "  1) Upgrade the original Wolf Leader on this computer to the new version"
+  say "  2) Revert to the original Wolf Leader"
+  case "$(ask "Choose" "1")" in
+    1) ACTION=upgrade ;;
+    2) ACTION=revert ;;
+    *) die "pick 1 or 2" ;;
+  esac
+fi
+"$ACTION"
