@@ -95,12 +95,15 @@ enum BuildInfo {
         let v = Bundle.main.object(forInfoDictionaryKey: key) as? String
         return (v?.isEmpty == false) ? v : nil
     }
+    /// Where update checks look when the build carries no git info (zip or Xcode builds).
+    static let defaultRepoURL = "https://github.com/Vapor-Nexus/wolf-leader"
+    static let defaultBranch = "feat/background-memory-installer"
+
     static var version: String { plist("CFBundleShortVersionString") ?? "dev" }
-    /// Commit the app was built from (set by build-app.sh).
+    /// Commit the app was built from (set by build-app.sh from a git checkout).
     static var gitSHA: String? { plist("WLGitSHA") }
-    static var branch: String { plist("WLGitBranch") ?? "main" }
-    /// https://github.com/<owner>/<repo> of the build checkout's remote.
-    static var repoURL: String { plist("WLRepoURL") ?? "" }
+    static var branch: String { plist("WLGitBranch") ?? defaultBranch }
+    static var repoURL: String { plist("WLRepoURL") ?? defaultRepoURL }
 }
 
 /// Files bundled with the app: installer/mac/install.sh, ini.sh, examples/, hub sources.

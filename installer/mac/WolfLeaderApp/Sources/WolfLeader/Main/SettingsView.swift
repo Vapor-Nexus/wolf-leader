@@ -383,6 +383,21 @@ private struct SettingsUpdatesGroup: View {
                 }
             }
             WLDivider()
+            WLRow(title: "Branch", detail: "Which GitHub branch to follow. Pushes to it show up here as updates.") {
+                Picker("Branch", selection: Binding(
+                    get: { updates.branch },
+                    set: { updates.setBranch($0) }
+                )) {
+                    ForEach(updates.branches.isEmpty ? [updates.branch] : updates.branches, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 260)
+                .disabled(working)
+                .task { await updates.loadBranches() }
+            }
+            WLDivider()
             WLRow(title: "Skills & rule", detail: "Downloads the latest Cursor and Claude Code files from GitHub and installs them. Makes an undo point first.") {
                 Button {
                     Task { await updates.updateSkills() }

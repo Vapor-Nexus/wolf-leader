@@ -104,6 +104,8 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var preparing = false
     @Published private(set) var updateNote: String? = nil
     @Published private(set) var updateSucceeded: Bool? = nil
+    /// Branch names on GitHub for the branch picker (always includes the current branch).
+    @Published private(set) var branches: [String] = []
 
     let runner = InstallRunner()
 
@@ -112,7 +114,7 @@ final class UpdateChecker: ObservableObject {
     private var exitWatch: AnyCancellable?
     private var runnerWatch: AnyCancellable?
     private var awaitingInstall = false
-    private var pending: (work: URL, result: URL, backup: URL)?
+    private var pending: (work: URL, result: URL, backup: URL, head: String?)?
 
     var hasUpdate: Bool {
         if case .available(let n) = status { return n > 0 }
@@ -169,7 +171,8 @@ final class UpdateChecker: ObservableObject {
         let branch = self.branch
         let api = "https://api.github.com/repos/\(repo.owner)/\(repo.name)"
         do {
-            if let sha = BuildInfo.gitSHA {
+            // Last commit this Mac updated to, else the commit the app was built from.
+            if let sha = Self.baseline(repo: repo, branch: branch) ?? BuildInfo.gitSHA {
                 do {
                     let json = try await Self.fetchJSON("\(api)/compare/\(sha)...\(Self.pathEscape(branch))")
                     guard let dict = json as? [String: Any] else { throw UpdateError.badResponse }
@@ -181,12 +184,60 @@ final class UpdateChecker: ObservableObject {
                     try await loadBranchHead(api: api, branch: branch)
                 }
             } else {
+                // No git info in this build (zip or Xcode): start counting from today's head.
                 try await loadBranchHead(api: api, branch: branch)
+                if let head = commits.first?.sha { Self.setBaseline(head, repo: repo, branch: branch) }
+                commits = []
+                status = .upToDate
             }
             lastChecked = Date()
         } catch {
             status = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: Branch picker
+
+    func loadBranches() async {
+        guard let repo else { branches = []; return }
+        let api = "https://api.github.com/repos/\(repo.owner)/\(repo.name)"
+        var names: [String] = []
+        if let list = try? await Self.fetchJSON("\(api)/branches?per_page=100") as? [[String: Any]] {
+            names = list.compactMap { $0["name"] as? String }
+        }
+        if !names.contains(branch) { names.insert(branch, at: 0) }
+        branches = names.sorted { a, b in
+            if a == "main" { return true }
+            if b == "main" { return false }
+            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
+    }
+
+    func setBranch(_ name: String) {
+        guard let store, name != branch else { return }
+        store.config.branch = name
+        store.save()
+        commits = []
+        status = .idle
+        Task { await check() }
+    }
+
+    nonisolated private static func baselineKey(repo: GitHubRepo, branch: String) -> String {
+        "wl.updateBaseline.\(repo.owner)/\(repo.name)@\(branch)"
+    }
+
+    nonisolated private static func baseline(repo: GitHubRepo, branch: String) -> String? {
+        UserDefaults.standard.string(forKey: baselineKey(repo: repo, branch: branch))
+    }
+
+    nonisolated private static func setBaseline(_ sha: String, repo: GitHubRepo, branch: String) {
+        UserDefaults.standard.set(sha, forKey: baselineKey(repo: repo, branch: branch))
+    }
+
+    private static func headSHA(api: String, branch: String) async throws -> String? {
+        let enc = branch.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? branch
+        let json = try await fetchJSON("\(api)/commits?sha=\(enc)&per_page=1")
+        return (json as? [[String: Any]])?.first?["sha"] as? String
     }
 
     private func loadBranchHead(api: String, branch: String) async throws {
@@ -246,6 +297,7 @@ final class UpdateChecker: ObservableObject {
         let work = fm.temporaryDirectory.appendingPathComponent("wolf-leader-update-\(UUID().uuidString)", isDirectory: true)
         do {
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
+            let head = try? await Self.headSHA(api: "https://api.github.com/repos/\(repo.owner)/\(repo.name)", branch: branch)
             guard let zipURL = URL(string: "https://codeload.github.com/\(repo.owner)/\(repo.name)/zip/refs/heads/\(Self.pathEscape(branch))") else {
                 throw UpdateError.badURL
             }
@@ -283,7 +335,7 @@ final class UpdateChecker: ObservableObject {
                 args += ["--git-name", git.name, "--git-email", git.email]
             }
 
-            pending = (work: work, result: result, backup: backup)
+            pending = (work: work, result: result, backup: backup, head: head)
             awaitingInstall = true
             updateNote = "Installing the new skills and rule…"
             runner.run(script: script, args: args, env: [:])
@@ -307,6 +359,11 @@ final class UpdateChecker: ObservableObject {
         }
         if code == 0 && fields["status"] != "fail" {
             updateSucceeded = true
+            if let head = job.head, let repo {
+                Self.setBaseline(head, repo: repo, branch: branch)
+                commits = []
+                status = .upToDate
+            }
             let warnings = Int(fields["warnings"] ?? "0") ?? 0
             updateNote = "Skills and rule are up to date. Restart Cursor and Claude Code to load them."
                 + (warnings > 0 ? " Finished with \(warnings) warning\(warnings == 1 ? "" : "s"); see the log." : "")
