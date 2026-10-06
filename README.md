@@ -101,6 +101,10 @@ docker compose -f docker-compose.postgres.yml up -d --build
   computer is.
 - Already have chats? `scripts/wolf-backfill.py` imports existing Cursor and Claude Code sessions
   into grouped projects.
+- Running the original Wolf Leader? Run `bash scripts/wolf-og-migrate.sh` on the hub computer
+  **before** installing any client. It moves your projects, chats and memories to the new hub and
+  creates the share folders, leaving the original folder untouched. Run it again and pick Revert to
+  go back (Mac and Linux hubs).
 
 Times shown to humans are local, `HH:MM MM/DD/YYYY`, using `WOLF_TZ`.
 
